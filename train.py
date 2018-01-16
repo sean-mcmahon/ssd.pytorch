@@ -54,6 +54,7 @@ parser.add_argument('--send_images_to_visdom', type=str2bool, default=False,
                     help='Sample a random image from each 10th batch, send it to visdom after augmentations step')
 parser.add_argument('--save_folder', default='weights/',
                     help='Location to save checkpoint models')
+parser.add_argument('--weights_folder', default='weights/')
 parser.add_argument('--data_root', default=VOCroot,
                     help='Location of VOC root directory')
 parser.add_argument('--data_set', default=voc)
@@ -104,7 +105,7 @@ if args.resume:
     print('Resuming training, loading {}...'.format(args.resume))
     ssd_net.load_weights(args.resume)
 else:
-    vgg_weights = torch.load(args.save_folder + args.basenet)
+    vgg_weights = torch.load(os.path.join(args.weights_folder, args.basenet))
     print('Loading base network...')
     ssd_net.vgg.load_state_dict(vgg_weights)
 
@@ -148,7 +149,7 @@ def train():
         target_transforms[args.data_set]())
 
     print('Using "{}" Data'.format(dataset.__class__.__name__))
-    
+
     epoch_size = len(dataset) // args.batch_size
     print('Training SSD on', dataset.name)
     step_index = 0
@@ -245,10 +246,12 @@ def train():
                 )
         if iteration % 5000 == 0:
             print('Saving state, iter:', iteration)
-            torch.save(ssd_net.state_dict(), 'weights/ssd300_0712_' +
-                       repr(iteration) + '.pth')
+            sstr = os.path.join(
+                args.save_folder, 'ssd{}_0712_{}.pth'.format(
+                    str(args.ssd_dim, repr(iteration))))
+            torch.save(ssd_net.state_dict(), sstr)
     torch.save(ssd_net.state_dict(), args.save_folder +
-               '' + args.version + '.pth')
+               'ssd' + str(args.ssd_dim) + args.version + '.pth')
 
 
 def adjust_learning_rate(optimizer, gamma, step):
