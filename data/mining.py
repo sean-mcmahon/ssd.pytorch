@@ -1,3 +1,4 @@
+#!/usr/env python3.5
 """
 My Mining Dataset Classes for parsing through SSD in pytorch.
 
@@ -76,6 +77,7 @@ class MiningDataset(VOCDetection):
         json_data = json.load(open(os.path.join(root, json_set)))
         self.im_names = []
         self.targets = []
+        print('Loading from {}.'.format(json_set))
 
         for datum in json_data:
             if os.path.isdir('/home/n8307628'):
@@ -105,6 +107,8 @@ class MiningDataset(VOCDetection):
 
     def pull_image(self, index):
         img_name = self.im_names[index]
+        assert os.path.isfile(
+            img_name), 'Invalid name {} - "{}"'.format(index, img_name)
         return cv2.imread(img_name, cv2.IMREAD_COLOR)
 
     def pull_item(self, index):
@@ -130,18 +134,87 @@ class MiningDataset(VOCDetection):
         return torch.from_numpy(img).permute(2, 0, 1), target, height, width
 
 
+def getMiningMean(root, json_files):
+    if isinstance(json_files, list):
+        njson_file = os.path.join(root, 'combined.json')
+        jdict = {}
+        with open(njson_file, 'r+') as f:
+            for j in json_files:
+                jdict.update(json.load(open(os.path.join(root, j))))
+            f.seek(0)
+            json.dump(jdict, f)
+        json_files = os.path.basename(njson_file)
+
+    mdata = MiningDataset(root, transform=None,
+                          target_transform=MiningAnnotationTransform(),
+                          json_set=json_files)
+    mean = np.zeros(3)
+    print('Calulating mean from {} ({} images)'.format(
+        json_files, mdata.__len__()))
+    N = 0
+    for idx in range(mdata.__len__()):
+        img = mdata.pull_image(idx)
+        height, width, channels = img.shape
+        # blue
+        mean[2] += np.sum(img[:, :, 0])
+        # green
+        mean[1] += np.sum(img[:, :, 1])
+        # red
+        mean[0] += np.sum(img[:, :, 2])
+
+        N += (height * width)
+
+    return mean / N
+
+
+def rmNonLabelledInstances(root, json_file, new_name=None):
+    json_file = json_file if json_file.endswith(
+        '.json') else json_file + '.json'
+    jdata = json.load(open(os.path.join(root, json_file)))
+
+    all_labelled_ins = [d for d in jdata if any(d['annotations'])]
+
+    print('removed {} labels'.format(len(jdata) - len(all_labelled_ins)))
+    if new_name is not None:
+        newjson = os.path.join(root, new_name)
+        newjson = newjson if newjson.endswith(
+            '.json') else newjson + '.json'
+    else:
+        newjson = json_file
+
+    if len(jdata) - len(all_labelled_ins) == 0:
+        return os.path.basename(newjson)
+    else:
+        with open(newjson, 'w', encoding='utf-8') as f:
+            json.dump(all_labelled_ins, f)
+        return os.path.basename(newjson)
+
+
 if __name__ == '__main__':
     voc_root = '/home/sean/data/VOCdevkit'
     voc_sets = [('2007', 'trainval'), ('2012', 'trainval')]
     ssd_dim = 300
     voc_means = (104, 117, 123)
+
+    mining_root = '/home/sean/hpc-home/Mining_Site/MM_Car_Cam'
+    json_file = 'train_gopro1_scraped_all_labelled'
+    # json_file = rmNonLabelledInstances(mining_root, json_file, json_file + '_all_labelled')
+    m_mean = getMiningMean(mining_root, json_file)
+    print('mining mean = {}'.format(m_mean))
+    m_mean = [round(m) for m in m_mean]
+    print('mining mean rounded = {}'.format(m_mean))
+    m_save = os.path.join(os.path.dirname(
+        os.path.realpath(__file__)), 'toy_mining_means.txt')
+    with open(m_save, 'w') as f:
+        f.write(str(m_mean))
+
     print('Testing Constructors')
     voc_dataset = VOCDetection(voc_root, voc_sets, SSDAugmentation(
         ssd_dim, voc_means), AnnotationTransform())
 
-    mining_root = '/home/sean/hpc-home/Mining_Site/MM_Car_Cam'
-    mdataset = MiningDataset(mining_root, transform=SSDMiningAugmentation(
-        ssd_dim, voc_means), target_transform=MiningAnnotationTransform())
+    mdataset = MiningDataset(
+        mining_root, transform=SSDMiningAugmentation(ssd_dim, m_mean),
+        target_transform=MiningAnnotationTransform(), json_set=json_file)
 
     data_iterators = [voc_dataset, mdataset]
 
@@ -160,11 +233,18 @@ if __name__ == '__main__':
         im, gt, h, w = it.pull_item(4)
         print('Image shape: {} (w={},h={})\nBboxes {}:\n{}'.format(
             im.size(), w, h, len(gt), gt))
-        assert h == ssd_dim and w == ssd_dim, 'Height and width do not match ssd_dim'
+        assert im.size()[1] == ssd_dim and im.size()[
+            2] == ssd_dim, 'Height and width do not match ssd_dim'
 
         print('Test __getitem__')
         im, gt = it.__getitem__(4)
-        print('Img dimensions {}. Range {} - {}'.format(im.size(), im.min(), im.max()))
+        print('Img dimensions {}. Range {} - {}'.format(im.size(),
+                                                        im.min(), im.max()))
         print('Number of bboxes {}'.format(len(gt)))
+
+        if 'VOCDetection' not in it.__class__.__name__:
+            print('Iterating over entire dataset...')
+            for idx in range(it.__len__()):
+                it.pull_item(idx)
 
         print('~' * 20, '\n')

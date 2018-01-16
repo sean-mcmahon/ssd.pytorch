@@ -25,10 +25,10 @@ def jaccard_numpy(box_a, box_b):
         jaccard overlap: Shape: [box_a.shape[0], box_a.shape[1]]
     """
     inter = intersect(box_a, box_b)
-    area_a = ((box_a[:, 2]-box_a[:, 0]) *
-              (box_a[:, 3]-box_a[:, 1]))  # [A,B]
-    area_b = ((box_b[2]-box_b[0]) *
-              (box_b[3]-box_b[1]))  # [A,B]
+    area_a = ((box_a[:, 2] - box_a[:, 0]) *
+              (box_a[:, 3] - box_a[:, 1]))  # [A,B]
+    area_b = ((box_b[2] - box_b[0]) *
+              (box_b[3] - box_b[1]))  # [A,B]
     union = area_a + area_b - inter
     return inter / union  # [A,B]
 
@@ -65,11 +65,13 @@ class Lambda(object):
 
 
 class ConvertFromInts(object):
+
     def __call__(self, image, boxes=None, labels=None):
         return image.astype(np.float32), boxes, labels
 
 
 class SubtractMeans(object):
+
     def __init__(self, mean):
         self.mean = np.array(mean, dtype=np.float32)
 
@@ -80,6 +82,7 @@ class SubtractMeans(object):
 
 
 class ToAbsoluteCoords(object):
+
     def __call__(self, image, boxes=None, labels=None):
         height, width, channels = image.shape
         boxes[:, 0] *= width
@@ -91,6 +94,7 @@ class ToAbsoluteCoords(object):
 
 
 class ToPercentCoords(object):
+
     def __call__(self, image, boxes=None, labels=None):
         height, width, channels = image.shape
         boxes[:, 0] /= width
@@ -102,16 +106,34 @@ class ToPercentCoords(object):
 
 
 class Resize(object):
+
     def __init__(self, size=300):
         self.size = size
 
     def __call__(self, image, boxes=None, labels=None):
         image = cv2.resize(image, (self.size,
-                                 self.size))
+                                   self.size))
+        return image, boxes, labels
+
+
+class ShrinkLargeImgs(object):
+    """
+    Shrink images larger than size. If the image dimensions are larger than
+    the specified resize value, then shrink image.
+    """
+    def __init__(self, size=1000):
+        self.size = size
+
+    def __call__(self, image, boxes=None, labels=None):
+        height, width, channels = image.shape
+        if height >= self.size and width >= self.size:
+            image = cv2.resize(image, (self.size,
+                                       self.size))
         return image, boxes, labels
 
 
 class RandomSaturation(object):
+
     def __init__(self, lower=0.5, upper=1.5):
         self.lower = lower
         self.upper = upper
@@ -126,6 +148,7 @@ class RandomSaturation(object):
 
 
 class RandomHue(object):
+
     def __init__(self, delta=18.0):
         assert delta >= 0.0 and delta <= 360.0
         self.delta = delta
@@ -139,6 +162,7 @@ class RandomHue(object):
 
 
 class RandomLightingNoise(object):
+
     def __init__(self):
         self.perms = ((0, 1, 2), (0, 2, 1),
                       (1, 0, 2), (1, 2, 0),
@@ -153,6 +177,7 @@ class RandomLightingNoise(object):
 
 
 class ConvertColor(object):
+
     def __init__(self, current='BGR', transform='HSV'):
         self.transform = transform
         self.current = current
@@ -168,6 +193,7 @@ class ConvertColor(object):
 
 
 class RandomContrast(object):
+
     def __init__(self, lower=0.5, upper=1.5):
         self.lower = lower
         self.upper = upper
@@ -183,6 +209,7 @@ class RandomContrast(object):
 
 
 class RandomBrightness(object):
+
     def __init__(self, delta=32):
         assert delta >= 0.0
         assert delta <= 255.0
@@ -196,11 +223,13 @@ class RandomBrightness(object):
 
 
 class ToCV2Image(object):
+
     def __call__(self, tensor, boxes=None, labels=None):
         return tensor.cpu().numpy().astype(np.float32).transpose((1, 2, 0)), boxes, labels
 
 
 class ToTensor(object):
+
     def __call__(self, cvimage, boxes=None, labels=None):
         return torch.from_numpy(cvimage.astype(np.float32)).permute(2, 0, 1), boxes, labels
 
@@ -218,6 +247,7 @@ class RandomSampleCrop(object):
             boxes (Tensor): the adjusted bounding boxes in pt form
             labels (Tensor): the class labels for each bbox
     """
+
     def __init__(self):
         self.sample_options = (
             # using entire original input image
@@ -260,7 +290,8 @@ class RandomSampleCrop(object):
                 top = random.uniform(height - h)
 
                 # convert to integer rect x1,y1,x2,y2
-                rect = np.array([int(left), int(top), int(left+w), int(top+h)])
+                rect = np.array(
+                    [int(left), int(top), int(left + w), int(top + h)])
 
                 # calculate IoU (jaccard overlap) b/t the cropped and gt boxes
                 overlap = jaccard_numpy(boxes, rect)
@@ -310,6 +341,7 @@ class RandomSampleCrop(object):
 
 
 class Expand(object):
+
     def __init__(self, mean):
         self.mean = mean
 
@@ -319,11 +351,11 @@ class Expand(object):
 
         height, width, depth = image.shape
         ratio = random.uniform(1, 4)
-        left = random.uniform(0, width*ratio - width)
-        top = random.uniform(0, height*ratio - height)
+        left = random.uniform(0, width * ratio - width)
+        top = random.uniform(0, height * ratio - height)
 
         expand_image = np.zeros(
-            (int(height*ratio), int(width*ratio), depth),
+            (int(height * ratio), int(width * ratio), depth),
             dtype=image.dtype)
         expand_image[:, :, :] = self.mean
         expand_image[int(top):int(top + height),
@@ -338,6 +370,7 @@ class Expand(object):
 
 
 class RandomMirror(object):
+
     def __call__(self, image, boxes, classes):
         _, width, _ = image.shape
         if random.randint(2):
@@ -374,6 +407,7 @@ class SwapChannels(object):
 
 
 class PhotometricDistort(object):
+
     def __init__(self):
         self.pd = [
             RandomContrast(),
@@ -398,6 +432,7 @@ class PhotometricDistort(object):
 
 
 class SSDAugmentation(object):
+
     def __init__(self, size=300, mean=(104, 117, 123)):
         self.mean = mean
         self.size = size
@@ -416,12 +451,15 @@ class SSDAugmentation(object):
     def __call__(self, img, boxes, labels):
         return self.augment(img, boxes, labels)
 
+
 class SSDMiningAugmentation(SSDAugmentation):
+
     def __init__(self, size=300, mean=(104, 117, 123)):
         self.mean = mean
         self.size = size
         # Same as SSDAugmentation minus Expand
         self.augment = Compose([
+            ShrinkLargeImgs(1000),
             ConvertFromInts(),
             ToAbsoluteCoords(),
             PhotometricDistort(),
