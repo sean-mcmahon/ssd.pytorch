@@ -9,7 +9,7 @@ import argparse
 parser = argparse.ArgumentParser(description='Single Shot MultiBox Detection')
 parser.add_argument('--weights', default='weights/ssd_300_VOC0712.pth',
                     type=str, help='Trained state_dict file path')
-parser.add_argument('--cuda', default=False, type=bool,
+parser.add_argument('--cuda', default=True, type=bool,
                     help='Use cuda to train model')
 args = parser.parse_args()
 
