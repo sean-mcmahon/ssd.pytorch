@@ -78,6 +78,10 @@ class MultiBoxLoss(nn.Module):
         conf_t = Variable(conf_t, requires_grad=False)
 
         pos = conf_t > 0
+<<<<<<< HEAD
+=======
+        # num_pos = pos.sum(keepdim=True)
+>>>>>>> aa37e3ebfaf83ef39f4ea0d56a985a57c20c8fa6
         num_pos = pos.sum(dim=1, keepdim=True)
 
         # Localization Loss (Smooth L1)
