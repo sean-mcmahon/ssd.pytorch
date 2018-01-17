@@ -57,7 +57,7 @@ parser.add_argument('--save_folder', default='weights/',
 parser.add_argument('--weights_folder', default='weights/')
 parser.add_argument('--data_root', default=VOCroot,
                     help='Location of VOC root directory')
-parser.add_argument('--data_set', default=voc)
+parser.add_argument('--data_set', default='voc')
 args = parser.parse_args()
 
 if args.cuda and torch.cuda.is_available():
@@ -248,10 +248,10 @@ def train():
             print('Saving state, iter:', iteration)
             sstr = os.path.join(
                 args.save_folder, 'ssd{}_0712_{}.pth'.format(
-                    str(args.ssd_dim, repr(iteration))))
+                    str(ssd_dim), repr(iteration)))
             torch.save(ssd_net.state_dict(), sstr)
     torch.save(ssd_net.state_dict(), args.save_folder +
-               'ssd' + str(args.ssd_dim) + args.version + '.pth')
+               'ssd' + str(ssd_dim) + args.version + '.pth')
 
 
 def adjust_learning_rate(optimizer, gamma, step):

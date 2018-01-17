@@ -16,11 +16,14 @@ from PIL import Image
 import numpy as np
 import cv2
 import json
-from voc0712 import VOCDetection, AnnotationTransform
+try:
+    from data.voc0712 import VOCDetection, AnnotationTransform
+except ImportError:
+    from voc0712 import VOCDetection, AnnotationTransform
+
 sys.path.append('/home/sean/Dropbox/Uni/Code/ssd_pytorch/utils')
 from augmentations import SSDAugmentation, SSDMiningAugmentation
 # from ..utils.augmentations import SSDAugmentation, SSDMiningAugmentation
-import pdb
 
 
 MINING_CLASSES = ('mine_vehicle', 'car', 'signs', 'pole', 'person', 'slips')
