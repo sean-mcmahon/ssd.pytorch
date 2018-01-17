@@ -57,7 +57,7 @@ parser.add_argument('--save_folder', default='weights/',
 parser.add_argument('--weights_folder', default='weights/')
 parser.add_argument('--data_root', default=VOCroot,
                     help='Location of VOC root directory')
-parser.add_argument('--data_set', default='voc')
+parser.add_argument('--data_set', default='voc', type=str)
 args = parser.parse_args()
 
 if args.cuda and torch.cuda.is_available():
@@ -71,15 +71,12 @@ if not os.path.exists(args.save_folder):
     os.mkdir(args.save_folder)
 
 ssd_dim = 300  # only support 300 now
-num_classes = len(VOC_CLASSES) + 1
 batch_size = args.batch_size
 accum_batch_size = 32
 iter_size = accum_batch_size / batch_size
-max_iter = 120000
-weight_decay = 0.0005
-stepvalues = (80000, 100000, 120000)
-gamma = 0.1
-momentum = 0.9
+max_iter = args.iterations
+# stepvalues = (80000, 100000, 120000)
+stepvalues = (150, 300, 450, 600)
 
 train_sets = {'voc': [('2007', 'trainval'), ('2012', 'trainval')],
               'mining': 'train_gopro1_scraped_all_labelled.json'}
@@ -89,6 +86,14 @@ augmentators = {'voc': SSDAugmentation(ssd_dim, rgb_means['voc']),
                 'mining': SSDMiningAugmentation(ssd_dim, rgb_means['mining'])}
 target_transforms = {'voc': AnnotationTransform,
                      'mining': MiningAnnotationTransform}
+
+print('Loading Dataset...')
+
+dataset = data_iters[args.data_set](
+    args.data_root, train_sets[args.data_set], augmentators[args.data_set],
+    target_transforms[args.data_set]())
+
+num_classes = dataset.numClasses()
 
 if args.visdom:
     import visdom
@@ -142,11 +147,6 @@ def train():
     loc_loss = 0  # epoch
     conf_loss = 0
     epoch = 0
-    print('Loading Dataset...')
-
-    dataset = data_iters[args.data_set](
-        args.data_root, train_sets[args.data_set], augmentators[args.data_set],
-        target_transforms[args.data_set]())
 
     print('Using "{}" Data'.format(dataset.__class__.__name__))
 
@@ -224,9 +224,12 @@ def train():
             print('Timer: %.4f sec.' % (t1 - t0))
             print('iter ' + repr(iteration) + ' || Loss: %.4f ||' %
                   (loss.data[0]), end=' ')
-            if args.visdom and args.send_images_to_visdom:
-                random_batch_index = np.random.randint(images.size(0))
-                viz.image(images.data[random_batch_index].cpu().numpy())
+
+            if args.visdom:
+                if args.send_images_to_visdom:
+                    random_batch_index = np.random.randint(images.size(0))
+                    viz.image(images.data[random_batch_index].cpu().numpy())
+                viz.save(['main'])
         if args.visdom:
             viz.line(
                 X=torch.ones((1, 3)).cpu() * iteration,
@@ -244,11 +247,11 @@ def train():
                     win=epoch_lot,
                     update=True
                 )
-        if iteration % 5000 == 0:
+        if iteration % 100 == 0:
             print('Saving state, iter:', iteration)
             sstr = os.path.join(
-                args.save_folder, 'ssd{}_0712_{}.pth'.format(
-                    str(ssd_dim), repr(iteration)))
+                args.save_folder, 'ssd{}_0712_{}_{}.pth'.format(
+                    str(ssd_dim), repr(iteration), args.data_set))
             torch.save(ssd_net.state_dict(), sstr)
     torch.save(ssd_net.state_dict(), args.save_folder +
                'ssd' + str(ssd_dim) + args.version + '.pth')

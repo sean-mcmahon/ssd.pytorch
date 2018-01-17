@@ -20,9 +20,11 @@ try:
     from data.voc0712 import VOCDetection, AnnotationTransform
 except ImportError:
     from voc0712 import VOCDetection, AnnotationTransform
-
-sys.path.append('/home/sean/Dropbox/Uni/Code/ssd_pytorch/utils')
-from augmentations import SSDAugmentation, SSDMiningAugmentation
+try:
+    from utils.augmentations import SSDAugmentation, SSDMiningAugmentation
+except ImportError:
+    sys.path.append('/home/sean/Dropbox/Uni/Code/ssd_pytorch/utils')
+    from augmentations import SSDAugmentation, SSDMiningAugmentation
 # from ..utils.augmentations import SSDAugmentation, SSDMiningAugmentation
 
 
@@ -86,6 +88,8 @@ class MiningDataset(VOCDetection):
             if os.path.isdir('/home/n8307628'):
                 n_name = datum['filename'].replace(
                     '/home/sean/hpc-home', expanduser("~"))
+                n_name = n_name.replace(
+                    '/home/sean//hpc-home', expanduser("~"))
             else:
                 n_name = datum['filename']
             self.im_names.append(str(n_name))
@@ -102,6 +106,11 @@ class MiningDataset(VOCDetection):
 
     def __len__(self):
         return len(self.im_names)
+
+    def numClasses(self):
+        # Pytorch crashed with weird cuda error without this + 1.
+        # It's also present when returning the VOC num classes, so must be needed.
+        return len(MINING_CLASSES) + 1
 
     def pull_anno(self, index):
         img_name = self.im_names[index]
