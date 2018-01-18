@@ -7,9 +7,10 @@ import torch.nn as nn
 import torch.backends.cudnn as cudnn
 import torchvision.transforms as transforms
 from torch.autograd import Variable
-from data import VOCroot, VOC_CLASSES as labelmap
-from PIL import Image, ImageDraw
+from data import VOCroot, VOC_CLASSES
+from PIL import Image, ImageDraw, ImageFont
 from data import AnnotationTransform, VOCDetection, BaseTransform, VOC_CLASSES
+from data.mining import MiningDataset, MiningAnnotationTransform, MINING_CLASSES
 import torch.utils.data as data
 from ssd import build_ssd
 import numpy as np
@@ -24,20 +25,22 @@ def str2bool(v):
 parser = argparse.ArgumentParser(description='Single Shot MultiBox Detection')
 parser.add_argument('--trained_model', default='weights/ssd_300_VOC0712.pth',
                     type=str, help='Trained state_dict file path to open')
-parser.add_argument('--save_folder', default='eval/', type=str,
+parser.add_argument('--save_folder', default='eval', type=str,
                     help='Dir to save results')
 parser.add_argument('--visual_threshold', default=0.6, type=float,
                     help='Final confidence threshold')
 parser.add_argument('--cuda', default=torch.cuda.is_available(), type=str2bool,
                     help='Use cuda to train model')
-parser.add_argument('--voc_root', default=VOCroot,
-                    help='Location of VOC root directory')
+parser.add_argument('--data_root', default=VOCroot,
+                    help='Location of Dataset root directory')
+parser.add_argument('--dataset', default='voc')
+parser.add_argument('--test_split', default='test_gopro2.json',
+                    help='The data split to use, train, val or test.' +
+                    ' Not used with VOC dataset')
 
 args = parser.parse_args()
-
-if not os.path.exists(args.save_folder):
-    os.mkdir(args.save_folder)
-
+labelmaps = {'voc': VOC_CLASSES, 'mining': MINING_CLASSES}
+labelmap = labelmaps[args.dataset]
 
 def test_net(save_folder, net, cuda, testset, transform, thresh,
              save_pred_img=False):
@@ -69,23 +72,28 @@ def test_net(save_folder, net, cuda, testset, transform, thresh,
         bboxes = []
         for i in range(detections.size(1)):
             j = 0
-            while detections[0, i, j, 0] >= 0.6:
+            while detections[0, i, j, 0] >= 0.3:
                 if pred_num == 0:
                     with open(filename, mode='a') as f:
                         f.write('PREDICTIONS: ' + '\n')
                 score = detections[0, i, j, 0]
                 label_name = labelmap[i - 1]
+                # if 'mine_vehicle' in label_name:
+                #     continue
                 pt = (detections[0, i, j, 1:] * scale).cpu().numpy()
                 coords = [pt[0], pt[1], pt[2], pt[3]]
                 pred_num += 1
                 bboxes.append(coords + [label_name])
-                # print('Prediction! Theres a {} at {}'.format(label_name, coords))
+                print('Prediction! Theres a {} at {}'.format(label_name, coords))
                 with open(filename, mode='a') as f:
                     f.write(str(pred_num) + ' label: ' + label_name + ' score: ' +
                             str(score) + ' ' + ' || '.join(str(c) for c in coords) + '\n')
                 j += 1
         if bboxes and bboxes[0] is not None:
-            visRes(bboxes, img, os.path.join(save_folder, 'preds'), img_id)
+            im_name = os.path.splitext(os.path.basename(img_id))[0]
+            while im_name.endswith('.png'):
+                im_name = os.path.splitext(im_name)[0]
+            visRes(bboxes, img, os.path.join(save_folder, 'preds'), im_name)
         else:
             print('No predictions for this image ({})'.format(img_id))
 
@@ -102,6 +110,7 @@ def visResults(detections, images, save_path):
 
 
 def visRes(det, img, save_path, name):
+    fnt = ImageFont.truetype('Pillow/Tests/fonts/FreeMono.ttf', 40)
     if not os.path.isdir(save_path):
         os.mkdir(save_path)
     assert isinstance(det, list)
@@ -111,23 +120,34 @@ def visRes(det, img, save_path, name):
     draw = ImageDraw.Draw(img)
     for bbox in det:
         draw.rectangle(bbox[0:4], outline=(255, 0, 0))
-        draw.text(bbox[0:2], bbox[4], fill=(0, 255, 0))
+        draw.text(bbox[0:2], bbox[4], font=fnt, fill=(0, 200, 0))
     img.save(os.path.join(save_path, 'img_%s.png' % name))
 
 if __name__ == '__main__':
+    save_folder = args.save_folder + '_%s' % args.dataset
+    if not os.path.exists(save_folder):
+        os.mkdir(save_folder)
+
     # load net
-    num_classes = len(VOC_CLASSES) + 1  # +1 background
-    net = build_ssd('test', 300, num_classes)  # initialize SSD
+     # +1 background
+    num_classes = {'voc': len(VOC_CLASSES) + 1,
+                   'mining': len(MINING_CLASSES) + 1}
+    means = {'voc': (104, 117, 123), 'mining': (65, 69, 76)}
+    net = build_ssd('test', 300, num_classes[args.dataset])  # initialize SSD
     net.load_state_dict(torch.load(args.trained_model))
     net.eval()
     print('Finished loading model!')
     # load data
-    testset = VOCDetection(
-        args.voc_root, [('2007', 'test')], None, AnnotationTransform())
+    split = {'voc': [('2007', 'test')], 'mining': args.test_split}
+    anno = {'voc': AnnotationTransform(), 'mining': MiningAnnotationTransform()}
+    datasets = {
+        'voc': VOCDetection, 'mining': MiningDataset}
+    testset = datasets[args.dataset](args.data_root, split[args.dataset],
+                                     None, anno[args.dataset])
     if args.cuda:
         net = net.cuda()
         cudnn.benchmark = True
     # evaluation
-    test_net(args.save_folder, net, args.cuda, testset,
-             BaseTransform(net.size, (104, 117, 123)),
+    test_net(save_folder, net, args.cuda, testset,
+             BaseTransform(net.size, means[args.dataset]),
              thresh=args.visual_threshold)
