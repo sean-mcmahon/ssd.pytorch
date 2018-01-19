@@ -93,7 +93,7 @@ dataset = data_iters[args.data_set](
     args.data_root, train_sets[args.data_set], augmentators[args.data_set],
     target_transforms[args.data_set]())
 
-num_classes = dataset.numClasses()
+num_classes = dataset.num_classes()
 
 if args.visdom:
     import visdom

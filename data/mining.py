@@ -82,6 +82,7 @@ class MiningDataset(VOCDetection):
         json_data = json.load(open(os.path.join(root, json_set)))
         self.im_names = []
         self.targets = []
+        self.classes = MINING_CLASSES
         print('Loading from {}.'.format(json_set))
 
         for datum in json_data:
@@ -107,7 +108,7 @@ class MiningDataset(VOCDetection):
     def __len__(self):
         return len(self.im_names)
 
-    def numClasses(self):
+    def num_classes(self):
         # Pytorch crashed with weird cuda error without this + 1.
         # It's also present when returning the VOC num classes, so must be needed.
         return len(MINING_CLASSES) + 1
@@ -122,6 +123,9 @@ class MiningDataset(VOCDetection):
         assert os.path.isfile(
             img_name), 'Invalid name {} - "{}"'.format(index, img_name)
         return cv2.imread(img_name, cv2.IMREAD_COLOR)
+
+    def pull_image_name(self, index):
+        return self.im_names[index]
 
     def pull_item(self, index):
         img_name = self.im_names[index]

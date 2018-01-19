@@ -191,6 +191,9 @@ def voc_ap(rec, prec, use_07_metric=True):
     If use_07_metric is true, uses the
     VOC 07 11 point method (default:False).
     """
+
+    # 0.8206971977644537
+    use_07_metric = False
     if use_07_metric:
         # 11 point metric
         ap = 0.
@@ -201,10 +204,15 @@ def voc_ap(rec, prec, use_07_metric=True):
                 p = np.max(prec[rec >= t])
             ap = ap + p / 11.
     else:
+        pp = np.zeros(rec.size)
+        for ii in range(1, rec.size):
+            pp[ii] = (rec[ii] - rec[ii-1]) * prec[ii]
+        my_ap = np.sum(pp)
         # correct AP calculation
         # first append sentinel values at the end
         mrec = np.concatenate(([0.], rec, [1.]))
         mpre = np.concatenate(([0.], prec, [0.]))
+
 
         # compute the precision envelope
         for i in range(mpre.size - 1, 0, -1):
@@ -216,6 +224,7 @@ def voc_ap(rec, prec, use_07_metric=True):
 
         # and sum (\Delta recall) * prec
         ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
+    import pdb; pdb.set_trace()
     return ap
 
 
@@ -347,7 +356,6 @@ cachedir: Directory for caching the annotations
         # ground truth
         prec = tp / np.maximum(tp + fp, np.finfo(np.float64).eps)
         ap = voc_ap(rec, prec, use_07_metric)
-        print('{} metrics. \nPrec = {}\nRec={}\nAP={}'.format(len(rec), prec, rec, ap))
     else:
         rec = -1.
         prec = -1.
@@ -373,18 +381,18 @@ def test_net(save_folder, net, cuda, dataset, transform, top_k,
     output_dir = get_output_dir('ssd300_120000', set_type)
     det_file = os.path.join(output_dir, 'detections.pkl')
 
-    for i in range(num_images):
-        im, gt, h, w = dataset.pull_item(i)
+    if not os.path.isfile(det_file):
+        for i in range(num_images):
+            im, gt, h, w = dataset.pull_item(i)
 
-        x = Variable(im.unsqueeze(0))
-        if args.cuda:
-            x = x.cuda()
-        _t['im_detect'].tic()
-        detections = net(x).data
-        detect_time = _t['im_detect'].toc(average=False)
+            x = Variable(im.unsqueeze(0))
+            if args.cuda:
+                x = x.cuda()
+            _t['im_detect'].tic()
+            detections = net(x).data
+            detect_time = _t['im_detect'].toc(average=False)
 
-        # skip j = 0, because it's the background class
-        if not os.path.isfile(det_file):
+            # skip j = 0, because it's the background class
             for j in range(1, detections.size(1)):
                 dets = detections[0, j, :]
                 mask = dets[:, 0].gt(0.).expand(5, dets.size(0)).t()
@@ -403,11 +411,11 @@ def test_net(save_folder, net, cuda, dataset, transform, top_k,
 
             print('im_detect: {:d}/{:d} {:.3f}s'.format(i + 1,
                                                         num_images, detect_time))
-            with open(det_file, 'wb') as f:
-                pickle.dump(all_boxes, f, pickle.HIGHEST_PROTOCOL)
-        else:
-            with open(det_file, 'rb') as f:
-                all_boxes = pickle.load(f)
+        with open(det_file, 'wb') as f:
+            pickle.dump(all_boxes, f, pickle.HIGHEST_PROTOCOL)
+    else:
+        with open(det_file, 'rb') as f:
+            all_boxes = pickle.load(f)
 
 
     print('Evaluating detections')

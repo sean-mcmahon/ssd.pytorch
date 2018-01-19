@@ -118,7 +118,7 @@ class VOCDetection(data.Dataset):
 
         return im, gt
 
-    def numClasses(self):
+    def num_classes(self):
         return len(VOC_CLASSES) + 1
 
     def __len__(self):
@@ -143,6 +143,10 @@ class VOCDetection(data.Dataset):
             target = np.hstack((boxes, np.expand_dims(labels, axis=1)))
         return torch.from_numpy(img).permute(2, 0, 1), target, height, width
         # return torch.from_numpy(img), target, height, width
+
+    def pull_image_name(self, index):
+        img_id = self.ids[index]
+        return self._imgpath % img_id
 
     def pull_image(self, index):
         '''Returns the original image object at index in PIL form
