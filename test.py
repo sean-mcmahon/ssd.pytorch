@@ -37,10 +37,13 @@ parser.add_argument('--dataset', default='voc')
 parser.add_argument('--test_split', default='test_gopro2.json',
                     help='The data split to use, train, val or test.' +
                     ' Not used with VOC dataset')
+parser.add_argument('--vis_preds', default=True, type=str2bool,
+                    help='If true save images with network detections')
 
 args = parser.parse_args()
 labelmaps = {'voc': VOC_CLASSES, 'mining': MINING_CLASSES}
 labelmap = labelmaps[args.dataset]
+
 
 def test_net(save_folder, net, cuda, testset, transform, thresh,
              save_pred_img=False):
@@ -49,6 +52,10 @@ def test_net(save_folder, net, cuda, testset, transform, thresh,
     if os.path.isfile(filename):
         os.remove(filename)
     num_images = len(testset)
+    print('\nPredictions based on threshold of ' +
+          '{}. {} saving prediction images...'.format(
+              thresh, 'Will be' if save_pred_img else 'NOT'))
+    print('-'*50)
     for i in range(num_images):
         print('Testing image {:d}/{:d}....'.format(i + 1, num_images))
         img = testset.pull_image(i)
@@ -72,7 +79,7 @@ def test_net(save_folder, net, cuda, testset, transform, thresh,
         bboxes = []
         for i in range(detections.size(1)):
             j = 0
-            while detections[0, i, j, 0] >= 0.3:
+            while detections[0, i, j, 0] >= thresh:
                 if pred_num == 0:
                     with open(filename, mode='a') as f:
                         f.write('PREDICTIONS: ' + '\n')
@@ -83,8 +90,8 @@ def test_net(save_folder, net, cuda, testset, transform, thresh,
                 pt = (detections[0, i, j, 1:] * scale).cpu().numpy()
                 coords = [pt[0], pt[1], pt[2], pt[3]]
                 pred_num += 1
-                bboxes.append(coords + [label_name])
-                print('Prediction! Theres a {} at {}'.format(label_name, coords))
+                bboxes.append(coords + [label_name] + [score])
+                # print('Prediction! Theres a {} at {}'.format(label_name, coords))
                 with open(filename, mode='a') as f:
                     f.write(str(pred_num) + ' label: ' + label_name + ' score: ' +
                             str(score) + ' ' + ' || '.join(str(c) for c in coords) + '\n')
@@ -93,7 +100,9 @@ def test_net(save_folder, net, cuda, testset, transform, thresh,
             im_name = os.path.splitext(os.path.basename(img_id))[0]
             while im_name.endswith('.png'):
                 im_name = os.path.splitext(im_name)[0]
-            visRes(bboxes, img, os.path.join(save_folder, 'preds'), im_name)
+            if save_pred_img:
+                visRes(bboxes, img, os.path.join(
+                    save_folder, 'preds'), im_name, conf=True)
         else:
             print('No predictions for this image ({})'.format(img_id))
 
@@ -109,8 +118,8 @@ def visResults(detections, images, save_path):
             print('Saved %d/%d images' % (count, len(images)))
 
 
-def visRes(det, img, save_path, name):
-    fnt = ImageFont.truetype('Pillow/Tests/fonts/FreeMono.ttf', 40)
+def visRes(det, img, save_path, name, conf=False):
+    fnt = ImageFont.truetype('Pillow/Tests/fonts/FreeMono.ttf', 25)
     if not os.path.isdir(save_path):
         os.mkdir(save_path)
     assert isinstance(det, list)
@@ -120,7 +129,11 @@ def visRes(det, img, save_path, name):
     draw = ImageDraw.Draw(img)
     for bbox in det:
         draw.rectangle(bbox[0:4], outline=(255, 0, 0))
-        draw.text(bbox[0:2], bbox[4], font=fnt, fill=(0, 200, 0))
+        if conf:
+            txt = " ".join((bbox[4], str(round(bbox[5], 3))))
+            draw.text(bbox[0:2], txt, font=fnt, fill=(0, 200, 0))
+        else:
+            draw.text(bbox[0:2], bbox[4], font=fnt, fill=(0, 200, 0))
     img.save(os.path.join(save_path, 'img_%s.png' % name))
 
 if __name__ == '__main__':
@@ -150,4 +163,4 @@ if __name__ == '__main__':
     # evaluation
     test_net(save_folder, net, args.cuda, testset,
              BaseTransform(net.size, means[args.dataset]),
-             thresh=args.visual_threshold)
+             thresh=args.visual_threshold, save_pred_img=args.vis_preds)

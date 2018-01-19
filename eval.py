@@ -166,6 +166,7 @@ def do_python_eval(output_dir='output', use_07=True):
         rec, prec, ap = voc_eval(
             filename, annopath, imgsetpath.format(set_type), cls, cachedir,
             ovthresh=0.5, use_07_metric=use_07_metric)
+        import pdb; pdb.set_trace()
         aps += [ap]
         print('AP for {} = {:.4f}'.format(cls, ap))
         with open(os.path.join(output_dir, cls + '_pr.pkl'), 'wb') as f:
@@ -346,6 +347,7 @@ cachedir: Directory for caching the annotations
         # ground truth
         prec = tp / np.maximum(tp + fp, np.finfo(np.float64).eps)
         ap = voc_ap(rec, prec, use_07_metric)
+        print('{} metrics. \nPrec = {}\nRec={}\nAP={}'.format(len(rec), prec, rec, ap))
     else:
         rec = -1.
         prec = -1.
@@ -353,6 +355,8 @@ cachedir: Directory for caching the annotations
 
     return rec, prec, ap
 
+
+# def calc_
 
 def test_net(save_folder, net, cuda, dataset, transform, top_k,
              im_size=300, thresh=0.05):
@@ -380,27 +384,31 @@ def test_net(save_folder, net, cuda, dataset, transform, top_k,
         detect_time = _t['im_detect'].toc(average=False)
 
         # skip j = 0, because it's the background class
-        for j in range(1, detections.size(1)):
-            dets = detections[0, j, :]
-            mask = dets[:, 0].gt(0.).expand(5, dets.size(0)).t()
-            dets = torch.masked_select(dets, mask).view(-1, 5)
-            if dets.dim() == 0:
-                continue
-            boxes = dets[:, 1:]
-            boxes[:, 0] *= w
-            boxes[:, 2] *= w
-            boxes[:, 1] *= h
-            boxes[:, 3] *= h
-            scores = dets[:, 0].cpu().numpy()
-            cls_dets = np.hstack((boxes.cpu().numpy(), scores[:, np.newaxis])) \
-                .astype(np.float32, copy=False)
-            all_boxes[j][i] = cls_dets
+        if not os.path.isfile(det_file):
+            for j in range(1, detections.size(1)):
+                dets = detections[0, j, :]
+                mask = dets[:, 0].gt(0.).expand(5, dets.size(0)).t()
+                dets = torch.masked_select(dets, mask).view(-1, 5)
+                if dets.dim() == 0:
+                    continue
+                boxes = dets[:, 1:]
+                boxes[:, 0] *= w
+                boxes[:, 2] *= w
+                boxes[:, 1] *= h
+                boxes[:, 3] *= h
+                scores = dets[:, 0].cpu().numpy()
+                cls_dets = np.hstack((boxes.cpu().numpy(), scores[:, np.newaxis])) \
+                    .astype(np.float32, copy=False)
+                all_boxes[j][i] = cls_dets
 
-        print('im_detect: {:d}/{:d} {:.3f}s'.format(i + 1,
-                                                    num_images, detect_time))
+            print('im_detect: {:d}/{:d} {:.3f}s'.format(i + 1,
+                                                        num_images, detect_time))
+            with open(det_file, 'wb') as f:
+                pickle.dump(all_boxes, f, pickle.HIGHEST_PROTOCOL)
+        else:
+            with open(det_file, 'rb') as f:
+                all_boxes = pickle.load(f)
 
-    with open(det_file, 'wb') as f:
-        pickle.dump(all_boxes, f, pickle.HIGHEST_PROTOCOL)
 
     print('Evaluating detections')
     evaluate_detections(all_boxes, output_dir, dataset)
@@ -417,7 +425,7 @@ if __name__ == '__main__':
     net = build_ssd('test', 300, num_classes)  # initialize SSD
     net.load_state_dict(torch.load(args.trained_model))
     net.eval()
-    print('Finished loading model!')
+    print('Finished loading model! {} Cuda'.format('Using' if args.cuda else 'No'))
     # load data
     dataset = VOCDetection(args.voc_root, [('2007', set_type)], BaseTransform(
         300, dataset_mean), AnnotationTransform())
