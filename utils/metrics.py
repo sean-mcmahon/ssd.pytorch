@@ -138,7 +138,7 @@ def calcMetrics(dets, gt, cls, dataset, thresh=0.5, use_07_metric=False):
         assert gt_for_img['imname'] == imname, '%s != %s' % (
             gt_for_img['imname'], imname)
         bbgt = gt_for_img['bbox']
-        num_dets_so_far = np.sum(dets_count[:idk])
+        num_dets_so_far = np.sum(dets_count[:idx])
         for b_num, bb in enumerate(bboxes, 1):
             ovmax = -np.inf
             if bbgt.size > 0:
@@ -150,9 +150,23 @@ def calcMetrics(dets, gt, cls, dataset, thresh=0.5, use_07_metric=False):
                         gt_for_img['det'][jmax] = 1
                     else:
                         fp[num_dets_so_far + b_num] = 1.
-
-
-    return -1, -1, -1
+                elif not gt_for_img['difficult'][jmax]:
+                    if not gt_for_img['det'][jmax]:
+                        tp[num_dets_so_far + b_num] = 1.
+                        gt_for_img['det'][jmax] = 1
+                    else:
+                        fp[num_dets_so_far + b_num] = 1.
+            else:
+                fp[num_dets_so_far + b_num] = 1.
+    # compute precision recall
+    fp = np.cumsum(fp)
+    tp = np.cumsum(tp)
+    rec = tp / float(npos)
+    # avoid divide by zero in case the first detection matches a difficult
+    # ground truth
+    prec = tp / np.maximum(tp + fp, np.finfo(np.float64).eps)
+    ap = voc_ap(rec, prec, use_07_metric)
+    return rec, prec, ap
 
 
 def calcOverlap(bb, bbgt):
