@@ -15,29 +15,28 @@ import cv2
 script_dir = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.dirname(script_dir))
 try:
-    from eval import Timer, voc_ap
+    from eval import Timer, voc_ap, parse_rec
     from ssd import build_ssd
     from data import VOC_CLASSES as labelmap
     from data import AnnotationTransform, VOCDetection, BaseTransform, VOC_CLASSES
 except ImportError:
-    from .eval import Timer, voc_ap
+    from .eval import Timer, voc_ap, parse_rec
     from .ssd import build_ssd
     from .data import VOC_CLASSES as labelmap
     from .data import AnnotationTransform, VOCDetection, BaseTransform, VOC_CLASSES
 
-
-def write_class_wise_results(bboxes, dataset, save_path='eval'):
-    def getpath(save_path, cls):
-        res_dir = os.path.join(save_path, 'class_wise_dets')
-        if not os.path.isdir(res_dir):
-            os.mkdir(res_dir)
-        return os.path.join(res_dir, 'det_{}.txt'.format(cls))
-
-    for cls_ind, cls in enumerate(dataset.classes):
-        print 'Writing {:s} results file'.format(cls)
-        filename = getpath(save_path, cls)
-        with open(filename, 'wt') as f:
-            for im_id, index in enumerate(dataset.)
+# def write_class_wise_results(bboxes, dataset, save_path='eval'):
+#     def getpath(save_path, cls):
+#         res_dir = os.path.join(save_path, 'class_wise_dets')
+#         if not os.path.isdir(res_dir):
+#             os.mkdir(res_dir)
+#         return os.path.join(res_dir, 'det_{}.txt'.format(cls))
+#
+#     for cls_ind, cls in enumerate(dataset.classes):
+#         print 'Writing {:s} results file'.format(cls)
+#         filename = getpath(save_path, cls)
+    # with open(filename, 'wt') as f:
+    # for im_id, index in enumerate(dataset.)
 
 
 def eval_ssd(data_iter, network, save_path, cuda=True, use_voc_07=False):
@@ -66,11 +65,10 @@ def eval_ssd(data_iter, network, save_path, cuda=True, use_voc_07=False):
         with open(gt_filename, 'rb') as g:
             all_targets = pickle.load(g)
 
-    write_class_wise_results(all_bboxes, data_iter, save_path)
     aps = []
     for i, cls in enumerate(data_iter.classes):
         prec, rec, ap = calcMetrics(
-            all_bboxes, all_targets, data_iter, cls, thresh=0.5, use_07_metric=use_voc_07)
+            all_bboxes, all_targets, cls, data_iter, thresh=0.5, use_07_metric=use_voc_07)
         aps += [ap]
         print('AP for {} = {:.4f}'.format(cls, ap))
         fname = os.path.join(save_path, cls + '_pr.txt')
@@ -80,41 +78,53 @@ def eval_ssd(data_iter, network, save_path, cuda=True, use_voc_07=False):
     print('Metrics saves to "{}"'.format(save_path))
 
 
-def calcMetrics(dets, gt, cls, dataset, thresh=0.5, use_07_metric=False):
-    cls_id = dataset.classes.index(cls)
-    class_recs = []
+def calcMetrics(dets, gt, classname, dataset, thresh=0.5, use_07_metric=False):
+    cls_id = dataset.classes.index(classname) + 1
+    class_recs = {}
     num_pos = 0
-    for idx in range(dataset.num_images):
+    for idx in range(len(dataset)):
         # Get Gts for class
         imname = dataset.pull_image_name(idx)
-        cls_r = [r for r in gt[imname] if dataset.classes(r[4]) == cls]
+        cls_r = [rr for rr in gt[imname]
+                 if dataset.classes[int(rr[4])] == classname]
         if cls_r != []:
-            if 'voc' in dataset.__class__.__name__.lower():
+            if 'voc' in dataset.__class__.__name__.lower() and dataset.target_transform.keep_difficult:
                 # VOC has 'difficult' bboxes which are not included in the
                 # metrics
                 anname = os.path.splitext(imname)[0]
                 anname = anname.replace('JPEGImages', 'Annotations')
                 annotation = parse_rec(anname + '.xml')
-                difficult = [[x['difficult'] for x in R]
-                             for R in annotation if R['name'] == cls]
+                difficult = [R['difficult']
+                             for R in annotation if R['name'] == classname]
                 difficult = np.array(difficult).astype(np.bool)
                 assert len(difficult) == len(cls_r), (
                     'len(difficult) = {}. len(cls_r) = {}'.format(
                         len(difficult), len(cls_r)))
+                assert len(cls_r) - sum(difficult) == sum(~difficult), (
+                    'diff={}. cls_r={}'.format(difficult, cls_r))
             else:
                 difficult = []
 
             det = [False] * len(cls_r)
             # should be equivalent to 'npos = npos + sum(~difficult)'
             num_pos += len(cls_r) - sum(difficult)
-            assert len(cls_r) - sum(difficult) == sum(~difficult), (
-                'diff={}. cls_r={}'.format(difficult, cls_r))
-            class_recs.append({'bbox': gt[imname][:, :4], 'det': det,
-                               'difficult': difficult, 'imname': imname})
+            if np.any(gt[imname][:, :4] < 1.0):
+                height, width, channels = dataset.pull_image(idx).shape
+                gt[imname][:, 0] *= width
+                gt[imname][:, 2] *= width
+                gt[imname][:, 1] *= height
+                gt[imname][:, 3] *= height
+            bbox = np.array([bb[0:4] for bb in cls_r])
+            class_recs[imname] = {'bbox': bbox, 'det': det,
+                                  'difficult': difficult}
+        else:
+            # image has no instances of class 'classname'
+            class_recs[imname] = {'bbox': np.array([]), 'det': [], 'difficult': []}
 
     cls_dets_arr = dets[cls_id][:]
-    dets_count = [len(k) for k in cls_dets_arr]
+    dets_count = [len(k[0]) for k in cls_dets_arr if k != []]
     num_dets = np.sum(dets_count)
+    assert num_dets > 1, 'num_dets = {}'.format(num_dets)
     tp = np.zeros(num_dets)
     fp = np.zeros(num_dets)
     # Loop over detections, compute overlap with GT
@@ -125,25 +135,26 @@ def calcMetrics(dets, gt, cls, dataset, thresh=0.5, use_07_metric=False):
         # if nothing detected, skip
         if dd == []:
             continue
-        imname = dataset.pull_image_name(idx)
-        confidences = dd[:, 4]
-        bboxes = dd[:, :4]
+        imname = dd[1]
+        confidences = dd[0][:, 4]
+        bboxes = dd[0][:, :4]
 
         # sort by confidences (not sure why, but Girshick did it!)
         sorted_ind = np.argsort(-confidences)
         bboxes = bboxes[sorted_ind, :]
 
-        gt_for_img = class_recs[idx]  # this is R in SSD eval.py
+        gt_for_img = class_recs[imname]  # this is R in SSD eval.py
+
         # make sure we have the same image
-        assert gt_for_img['imname'] == imname, '%s != %s' % (
-            gt_for_img['imname'], imname)
+        # assert gt_for_img['imname'] == imname, '%s != %s' % (
+        #     gt_for_img['imname'], imname)
         bbgt = gt_for_img['bbox']
         num_dets_so_far = np.sum(dets_count[:idx])
-        for b_num, bb in enumerate(bboxes, 1):
+        for b_num, bb in enumerate(bboxes, 0):
             ovmax = -np.inf
             if bbgt.size > 0:
                 overlaps, ovmax, jmax, = calcOverlap(bb, bbgt)
-            if ovmax > ovthresh:
+            if ovmax > thresh:
                 if gt_for_img['difficult'] == []:
                     if not gt_for_img['det'][jmax]:
                         tp[num_dets_so_far + b_num] = 1.
@@ -158,14 +169,19 @@ def calcMetrics(dets, gt, cls, dataset, thresh=0.5, use_07_metric=False):
                         fp[num_dets_so_far + b_num] = 1.
             else:
                 fp[num_dets_so_far + b_num] = 1.
+    assert np.sum(fp) + np.sum(tp) == num_dets, (
+        'sum(fp)={}; sum(tp)={}; num_dets={}'.format(np.sum(fp), np.sum(tp), num_dets))
     # compute precision recall
+    import pdb
+    pdb.set_trace()
     fp = np.cumsum(fp)
     tp = np.cumsum(tp)
-    rec = tp / float(npos)
+    rec = tp / float(num_pos)
     # avoid divide by zero in case the first detection matches a difficult
     # ground truth
     prec = tp / np.maximum(tp + fp, np.finfo(np.float64).eps)
     ap = voc_ap(rec, prec, use_07_metric)
+    # ap = 0.8484757496817481 for a 'aeroplane'
     return rec, prec, ap
 
 
@@ -198,6 +214,7 @@ def getDetandGT(dataset, net, use_cuda=True):
     all_targets = {}
     for i in range(num_images):
         im, gt, h, w = dataset.pull_item(i)
+        imname = dataset.pull_image_name(i)
 
         x = Variable(im.unsqueeze(0))
         if use_cuda:
@@ -221,8 +238,12 @@ def getDetandGT(dataset, net, use_cuda=True):
             scores = dets[:, 0].cpu().numpy()
             cls_dets = np.hstack((boxes.cpu().numpy(), scores[:, np.newaxis])) \
                 .astype(np.float32, copy=False)
-            all_boxes[j][i] = cls_dets
-        all_targets[dataset.pull_image_name(i)] = gt
+            all_boxes[j][i] = [cls_dets, imname]
+        gt[:, 0] *= w
+        gt[:, 2] *= w
+        gt[:, 1] *= h
+        gt[:, 3] *= h
+        all_targets[imname] = gt
 
         print('im_detect: {:d}/{:d} {:.3f}s'.format(i + 1,
                                                     num_images, detect_time))
@@ -235,13 +256,11 @@ def str2bool(v):
 
 def get_args():
     parser = argparse.ArgumentParser(
-        description='Single Shot MultiBox Detection')
+        description='Evaluate Single Shot MultiBox Detection')
     parser.add_argument('--trained_model',
                         default='/home/sean/src/ssd_pytorch/weights/ssd300_mAP_77.43_v2.pth',
                         type=str, help='Trained state_dict file path to open')
-    parser.add_argument('--save_folder', default='myeval/', type=str,
-                        help='File path to save results')
-    parser.add_argument('--save_path', default='eval', type=str,
+    parser.add_argument('--save_path', default='myeval/', type=str,
                         help='Dir to save results')
     parser.add_argument('--top_k', default=5, type=int,
                         help='Further restrict the number of predictions to parse')

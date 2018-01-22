@@ -34,38 +34,6 @@ else:
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
 
-parser = argparse.ArgumentParser(description='Single Shot MultiBox Detection')
-parser.add_argument('--trained_model', default='weights/ssd300_mAP_77.43_v2.pth',
-                    type=str, help='Trained state_dict file path to open')
-parser.add_argument('--save_folder', default='eval/', type=str,
-                    help='File path to save results')
-parser.add_argument('--confidence_threshold', default=0.01, type=float,
-                    help='Detection confidence threshold')
-parser.add_argument('--top_k', default=5, type=int,
-                    help='Further restrict the number of predictions to parse')
-parser.add_argument('--cuda', default=True, type=str2bool,
-                    help='Use cuda to train model')
-parser.add_argument('--voc_root', default=VOCroot,
-                    help='Location of VOC root directory')
-
-args = parser.parse_args()
-
-if not os.path.exists(args.save_folder):
-    os.mkdir(args.save_folder)
-
-if args.cuda and torch.cuda.is_available():
-    torch.set_default_tensor_type('torch.cuda.FloatTensor')
-else:
-    torch.set_default_tensor_type('torch.FloatTensor')
-
-annopath = os.path.join(args.voc_root, 'VOC2007', 'Annotations', '%s.xml')
-imgpath = os.path.join(args.voc_root, 'VOC2007', 'JPEGImages', '%s.jpg')
-imgsetpath = os.path.join(args.voc_root, 'VOC2007',
-                          'ImageSets', 'Main', '{:s}.txt')
-YEAR = '2007'
-devkit_path = VOCroot + 'VOC' + YEAR
-dataset_mean = (104, 117, 123)
-set_type = 'test'
 
 
 class Timer(object):
@@ -161,6 +129,7 @@ def do_python_eval(output_dir='output', use_07=True):
     print('VOC07 metric? ' + ('Yes' if use_07_metric else 'No'))
     if not os.path.isdir(output_dir):
         os.mkdir(output_dir)
+    import pdb; pdb.set_trace()
     for i, cls in enumerate(labelmap):
         filename = get_voc_results_file_template(set_type, cls)
         rec, prec, ap = voc_eval(
@@ -224,7 +193,6 @@ def voc_ap(rec, prec, use_07_metric=True):
 
         # and sum (\Delta recall) * prec
         ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
-    import pdb; pdb.set_trace()
     return ap
 
 
@@ -299,6 +267,7 @@ cachedir: Directory for caching the annotations
     detfile = detpath.format(classname)
     with open(detfile, 'r') as f:
         lines = f.readlines()
+    import pdb; pdb.set_trace()
     if any(lines) == 1:
 
         splitlines = [x.strip().split(' ') for x in lines]
@@ -347,7 +316,7 @@ cachedir: Directory for caching the annotations
                         fp[d] = 1.
             else:
                 fp[d] = 1.
-
+        pdb.set_trace()
         # compute precision recall
         fp = np.cumsum(fp)
         tp = np.cumsum(tp)
@@ -428,6 +397,39 @@ def evaluate_detections(box_list, output_dir, dataset):
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Single Shot MultiBox Detection (eval.py)')
+    parser.add_argument('--trained_model', default='weights/ssd300_mAP_77.43_v2.pth',
+                        type=str, help='Trained state_dict file path to open')
+    parser.add_argument('--save_folder', default='eval/', type=str,
+                        help='File path to save results')
+    parser.add_argument('--confidence_threshold', default=0.01, type=float,
+                        help='Detection confidence threshold')
+    parser.add_argument('--top_k', default=5, type=int,
+                        help='Further restrict the number of predictions to parse')
+    parser.add_argument('--cuda', default=True, type=str2bool,
+                        help='Use cuda to train model')
+    parser.add_argument('--voc_root', default=VOCroot,
+                        help='Location of VOC root directory')
+
+    args = parser.parse_args()
+
+    if not os.path.exists(args.save_folder):
+        os.mkdir(args.save_folder)
+
+    if args.cuda and torch.cuda.is_available():
+        torch.set_default_tensor_type('torch.cuda.FloatTensor')
+    else:
+        torch.set_default_tensor_type('torch.FloatTensor')
+
+    annopath = os.path.join(args.voc_root, 'VOC2007', 'Annotations', '%s.xml')
+    imgpath = os.path.join(args.voc_root, 'VOC2007', 'JPEGImages', '%s.jpg')
+    imgsetpath = os.path.join(args.voc_root, 'VOC2007',
+                              'ImageSets', 'Main', '{:s}.txt')
+    YEAR = '2007'
+    devkit_path = VOCroot + 'VOC' + YEAR
+    dataset_mean = (104, 117, 123)
+    set_type = 'test'
+
     # load net
     num_classes = len(VOC_CLASSES) + 1  # +1 background
     net = build_ssd('test', 300, num_classes)  # initialize SSD
