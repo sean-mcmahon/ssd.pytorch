@@ -317,7 +317,9 @@ cachedir: Directory for caching the annotations
                         fp[d] = 1.
             else:
                 fp[d] = 1.
-        pdb.set_trace()
+        ffname = os.path.join(cachedir, '{}_fp_tp.pkl'.format(classname) )
+        with open(ffname, 'wb') as f:
+            pickle.dump({'fp': fp, 'tp': tp, 'npos': npos}, f)
         # compute precision recall
         fp = np.cumsum(fp)
         tp = np.cumsum(tp)
