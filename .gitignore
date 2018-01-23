@@ -72,6 +72,9 @@ target/
 # pyenv
 .python-version
 
+# Python Pickle
+*.pkl
+
 # celery beat schedule file
 celerybeat-schedule
 
