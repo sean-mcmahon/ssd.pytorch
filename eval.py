@@ -29,7 +29,7 @@ if sys.version_info[0] == 2:
     import xml.etree.cElementTree as ET
 else:
     import xml.etree.ElementTree as ET
-
+def_voc_root = VOCroot + 'VOC' + '2007'
 
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
@@ -94,20 +94,21 @@ def get_output_dir(name, phase):
     return filedir
 
 
-def get_voc_results_file_template(image_set, cls):
+def get_voc_results_file_template(output_dir, image_set, cls):
     # VOCdevkit/VOC2007/results/det_test_aeroplane.txt
     filename = 'det_' + image_set + '_%s.txt' % (cls)
-    filedir = os.path.join(devkit_path, 'results')
+    filedir = os.path.join(output_dir, 'results')
     if not os.path.exists(filedir):
         os.makedirs(filedir)
     path = os.path.join(filedir, filename)
     return path
 
 
-def write_voc_results_file(all_boxes, dataset):
+def write_voc_results_file(all_boxes, dataset, output_dir=def_voc_root):
+    assert os.path.isdir(output_dir), 'Invalid dir "{}"'.format(output_dir)
     for cls_ind, cls in enumerate(labelmap):
         print('Writing {:s} VOC results file'.format(cls))
-        filename = get_voc_results_file_template(set_type, cls)
+        filename = get_voc_results_file_template(output_dir, set_type, cls)
         with open(filename, 'wt') as f:
             for im_ind, index in enumerate(dataset.ids):
                 dets = all_boxes[cls_ind + 1][im_ind]
@@ -122,7 +123,7 @@ def write_voc_results_file(all_boxes, dataset):
 
 
 def do_python_eval(output_dir='output', use_07=True):
-    cachedir = os.path.join(devkit_path, 'annotations_cache')
+    cachedir = os.path.join(output_dir, 'annotations_cache')
     aps = []
     # The PASCAL VOC metric changed in 2010
     use_07_metric = use_07
@@ -131,7 +132,7 @@ def do_python_eval(output_dir='output', use_07=True):
         os.mkdir(output_dir)
     import pdb; pdb.set_trace()
     for i, cls in enumerate(labelmap):
-        filename = get_voc_results_file_template(set_type, cls)
+        filename = get_voc_results_file_template(output_dir, set_type, cls)
         rec, prec, ap = voc_eval(
             filename, annopath, imgsetpath.format(set_type), cls, cachedir,
             ovthresh=0.5, use_07_metric=use_07_metric)
@@ -351,6 +352,7 @@ def test_net(save_folder, net, cuda, dataset, transform, top_k,
     output_dir = get_output_dir(mdir, set_type)
     det_file = os.path.join(output_dir, 'detections.pkl')
 
+    assert os.path.isdir(output_dir), 'Invalid dir "{}"'.format(output_dir)
     if not os.path.isfile(det_file):
         for i in range(num_images):
             im, gt, h, w = dataset.pull_item(i)
@@ -393,7 +395,7 @@ def test_net(save_folder, net, cuda, dataset, transform, top_k,
 
 
 def evaluate_detections(box_list, output_dir, dataset):
-    write_voc_results_file(box_list, dataset)
+    write_voc_results_file(box_list, dataset, output_dir)
     do_python_eval(output_dir)
 
 
@@ -427,7 +429,7 @@ if __name__ == '__main__':
     imgsetpath = os.path.join(args.voc_root, 'VOC2007',
                               'ImageSets', 'Main', '{:s}.txt')
     YEAR = '2007'
-    devkit_path = VOCroot + 'VOC' + YEAR
+    devkit_path = args.voc_root + 'VOC' + YEAR
     dataset_mean = (104, 117, 123)
     set_type = 'test'
 
