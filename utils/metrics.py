@@ -11,7 +11,7 @@ import time
 import argparse
 import numpy as np
 import pickle
-import cv2
+import math
 script_dir = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.dirname(script_dir))
 try:
@@ -119,18 +119,32 @@ def calcMetrics(dets, gt, classname, dataset, thresh=0.5, use_07_metric=False):
                                   'difficult': difficult}
         else:
             # image has no instances of class 'classname'
-            class_recs[imname] = {'bbox': np.array([]), 'det': [], 'difficult': []}
+            class_recs[imname] = {'bbox': np.array(
+                []), 'det': [], 'difficult': []}
 
     cls_dets_arr = dets[cls_id][:]
-    dets_count = [len(k[0]) for k in cls_dets_arr if k != []]
-    num_dets = np.sum(dets_count)
+    dets_count = []
+    dets_count = [len(k[0]) if k != [] else 0 for k in cls_dets_arr]
+    dets_count = np.cumsum(dets_count)
+    num_dets = dets_count[-1]
     assert num_dets > 1, 'num_dets = {}'.format(num_dets)
+    assert len(dets_count) == len(cls_dets_arr), (
+        'len(dets_count) %d; len(cls_dets_arr) %d' % (len(dets_count),
+                                                      len(cls_dets_arr)))
     tp = np.zeros(num_dets)
     fp = np.zeros(num_dets)
     # Loop over detections, compute overlap with GT
     # If overlap (IOU) greater than threshold its a true positive
     # if the GT has been detected before of IOU below threshold its a false
     # positive
+    if classname == 'aeroplane':
+        plane_resfile = '/home/sean/hpc-home/SSD_detection/' + \
+            'results/eval_voc/ssd300_120000/test/aeroplane_pr.pkl'
+        pl_pr_file = plane_resfile.replace('aeroplane_pr', 'voc_aeroplane_fp_tp')
+        with open(plane_resfile, 'rb') as f:
+            pl_res = pickle.load(f)
+        with open(pl_pr_file, 'rb') as f:
+            pl_fp_tp = pickle.load(f)
     for idx, dd in enumerate(cls_dets_arr):
         # if nothing detected, skip
         if dd == []:
@@ -149,9 +163,12 @@ def calcMetrics(dets, gt, classname, dataset, thresh=0.5, use_07_metric=False):
         # assert gt_for_img['imname'] == imname, '%s != %s' % (
         #     gt_for_img['imname'], imname)
         bbgt = gt_for_img['bbox']
-        num_dets_so_far = np.sum(dets_count[:idx])
+        num_dets_so_far = dets_count[idx] - len(bboxes)
         for b_num, bb in enumerate(bboxes, 0):
+            assert num_dets_so_far + b_num < dets_count[-1], (
+                '%d < %d' % (num_dets_so_far + b_num, dets_count[-1]))
             ovmax = -np.inf
+            import pdb; pdb.set_trace()
             if bbgt.size > 0:
                 overlaps, ovmax, jmax, = calcOverlap(bb, bbgt)
             if ovmax > thresh:
@@ -169,11 +186,16 @@ def calcMetrics(dets, gt, classname, dataset, thresh=0.5, use_07_metric=False):
                         fp[num_dets_so_far + b_num] = 1.
             else:
                 fp[num_dets_so_far + b_num] = 1.
+        if classname == 'aeroplane':
+            d_idx = dets_count[idx]
+            assert len(fp) == len(pl_fp_tp['fp'])
+            assert np.array_equal(fp[:d_idx], pl_fp_tp['fp'][:d_idx])
+            assert np.array_equal(tp[:d_idx], pl_fp_tp['tp'][:d_idx])
     assert np.sum(fp) + np.sum(tp) == num_dets, (
         'sum(fp)={}; sum(tp)={}; num_dets={}'.format(np.sum(fp), np.sum(tp), num_dets))
     # compute precision recall
-    import pdb
-    pdb.set_trace()
+    fp_ = fp.copy()
+    tp_ = tp.copy()
     fp = np.cumsum(fp)
     tp = np.cumsum(tp)
     rec = tp / float(num_pos)
@@ -181,7 +203,17 @@ def calcMetrics(dets, gt, classname, dataset, thresh=0.5, use_07_metric=False):
     # ground truth
     prec = tp / np.maximum(tp + fp, np.finfo(np.float64).eps)
     ap = voc_ap(rec, prec, use_07_metric)
-    # ap = 0.8484757496817481 for a 'aeroplane'
+    if classname == 'aeroplane':
+        assert math.isclose(
+            ap, 0.8484757496817481, abs_tol=1e-12), 'ap={}'.format(ap)
+    elif classname == 'cow':
+        cow_resfile = '/home/sean/hpc-home/SSD_detection/' + \
+            'results/eval_voc/ssd300_120000/test/cow_pr.pkl'
+        with open(cow_resfile, 'rb') as f:
+            cow_res = pickle.load(f)
+        assert math.isclose(
+            ap, 0.8243, abs_tol=1e-3), 'ap={}'.format(ap)
+    # ap = 0.8484757496817481 for an 'aeroplane'
     return rec, prec, ap
 
 
