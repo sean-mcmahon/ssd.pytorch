@@ -347,7 +347,8 @@ def test_net(save_folder, net, cuda, dataset, transform, top_k,
 
     # timers
     _t = {'im_detect': Timer(), 'misc': Timer()}
-    output_dir = get_output_dir('ssd300_120000', set_type)
+    mdir = os.path.join(save_folder,'ssd300_120000' )
+    output_dir = get_output_dir(mdir, set_type)
     det_file = os.path.join(output_dir, 'detections.pkl')
 
     if not os.path.isfile(det_file):
