@@ -2,7 +2,7 @@ from .voc0712 import VOCDetection, AnnotationTransform, detection_collate, VOC_C
 from .config import *
 import cv2
 import numpy as np
-
+from .mining import MiningDataset, MINING_CLASSES, MiningAnnotationTransform
 
 def base_transform(image, size, mean):
     x = cv2.resize(image, (size, size)).astype(np.float32)
