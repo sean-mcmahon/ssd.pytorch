@@ -130,13 +130,11 @@ def do_python_eval(output_dir='output', use_07=True):
     print('VOC07 metric? ' + ('Yes' if use_07_metric else 'No'))
     if not os.path.isdir(output_dir):
         os.mkdir(output_dir)
-    import pdb; pdb.set_trace()
     for i, cls in enumerate(labelmap):
         filename = get_voc_results_file_template(output_dir, set_type, cls)
         rec, prec, ap = voc_eval(
             filename, annopath, imgsetpath.format(set_type), cls, cachedir,
             ovthresh=0.5, use_07_metric=use_07_metric)
-        import pdb; pdb.set_trace()
         aps += [ap]
         print('AP for {} = {:.4f}'.format(cls, ap))
         with open(os.path.join(output_dir, cls + '_pr.pkl'), 'wb') as f:
@@ -268,7 +266,6 @@ cachedir: Directory for caching the annotations
     detfile = detpath.format(classname)
     with open(detfile, 'r') as f:
         lines = f.readlines()
-    import pdb; pdb.set_trace()
     if any(lines) == 1:
 
         splitlines = [x.strip().split(' ') for x in lines]
