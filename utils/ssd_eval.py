@@ -19,7 +19,10 @@ from metrics import getDetandGT
 from ssd import build_ssd
 from data import MiningDataset, MINING_CLASSES, MiningAnnotationTransform
 from data import AnnotationTransform, VOCDetection, BaseTransform, VOC_CLASSES
-
+if sys.version_info[0] == 2:
+    import xml.etree.cElementTree as ET
+else:
+    import xml.etree.ElementTree as ET
 
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
@@ -101,7 +104,7 @@ def check_dets(all_bboxes, dets_dir, dataset, out_dir):
     # cls_voc_dets = os.path.join(voc_eval_path, 'results', 'det_test_{}.txt')
     orig_detsdir = '/home/sean/data/VOCdevkit/VOC2007/results'
     cls_voc_dets = os.path.join(orig_detsdir, 'det_test_{}.txt')
-    mydets = os.path.join(out_dir, 'class_detections', '{}_dets.txt')
+    mydets = os.path.join(dets_dir, '{}_dets.txt')
 
     for cls_id, classname in enumerate(dataset.classes):
         print('Checking {} dets text file {}/{}.'.format(classname, cls_id,
@@ -195,6 +198,92 @@ def write_class_dets(bboxes, dataset, out_dir):
                                    dets[k, 0] + 1, dets[k, 1] + 1,
                                    dets[k, 2] + 1, dets[k, 3] + 1))
     return dets_dir
+
+
+def write_class_labels(all_targets, dataset, out_dir):
+    def parse_rec(filename):
+        """
+        Parse a PASCAL VOC xml file. From:
+        https://github.com/amdegroot/ssd.pytorch/blob/master/eval.py
+        """
+        tree = ET.parse(filename)
+        objects = []
+        for obj in tree.findall('object'):
+            obj_struct = {}
+            obj_struct['name'] = obj.find('name').text
+            obj_struct['pose'] = obj.find('pose').text
+            obj_struct['truncated'] = int(obj.find('truncated').text)
+            obj_struct['difficult'] = int(obj.find('difficult').text)
+            bbox = obj.find('bndbox')
+            obj_struct['bbox'] = [int(bbox.find('xmin').text) - 1,
+                                  int(bbox.find('ymin').text) - 1,
+                                  int(bbox.find('xmax').text) - 1,
+                                  int(bbox.find('ymax').text) - 1]
+            objects.append(obj_struct)
+
+        return objects
+    voc_root = '/home/sean/data/VOCdevkit'
+    annopath = os.path.join(voc_root, 'VOC2007', 'Annotations', '%s.xml')
+    imagenames = [dataset.pull_image_name(id_) for id_ in range(len(dataset))]
+    image_ids = [os.path.basename(os.path.splitext(name)[0]) for name in imagenames]
+    cachefile = '/home/sean/data/VOCdevkit/VOC2007/annotations_cache/annots.pkl'
+    cachefile = '/home/sean/fiction.eww'
+    if not os.path.isfile(cachefile):
+        # load annots
+        recs = {}
+        for i, imagename in enumerate(imagenames):
+            recs[imagename] = parse_rec(annopath % (imagename))
+            if i % 100 == 0:
+                print('Reading annotation for {:d}/{:d}'.format(
+                    i + 1, len(imagenames)))
+    else:
+        with open(cachefile, 'rb') as f:
+            recs = pickle.load(f)
+
+    for cls_id, classname in enumerate(dataset.classes):
+        voc_cls_rec, voc_npos = get_voc_class_dict(classname, image_ids, recs)
+        my_cls_rec, m_npos = get_class_dict(cls_id, imagenames, all_targets)
+        raise NotImplementedError
+
+
+
+def check_annots(all_targets, dets_dir, dataset, out_dir):
+    raise NotImplementedError
+
+def get_class_dict(cls_id, imagenames, targets):
+    '''
+    Get class-wise GT label. GT originally from my Extended Pytorch Data iterators
+    '''
+    class_recs = {}
+    npos = 0
+    for imagename in imagenames:
+        cls_labels = [obj for obj in targets[imagename] if obj[4] == cls_id]
+        bbox = np.array([obj[:4] for obj in cls_labels])
+        det = [False] * len(cls_labels)
+        npos += len(cls_labels)
+        class_recs[imagename] = {'bbox': bbox, 'det': det}
+    return class_recs, npos
+
+
+
+def get_voc_class_dict(classname, imagenames, recs):
+    '''
+    Get class-wise GT VOC labels. From dict loading VOC data directly from .xml
+    From:
+    https://github.com/amdegroot/ssd.pytorch/blob/master/eval.py
+    '''
+    class_recs = {}
+    npos = 0
+    for imagename in imagenames:
+        R = [obj for obj in recs[imagename] if obj['name'] == classname]
+        bbox = np.array([x['bbox'] for x in R])
+        difficult = np.array([x['difficult'] for x in R]).astype(np.bool)
+        det = [False] * len(R)
+        npos = npos + sum(~difficult)
+        class_recs[imagename] = {'bbox': bbox,
+                                 'difficult': difficult,
+                                 'det': det}
+    return class_recs, npos
 
 
 def eval_ssd(data_iter, network, save_path, cuda=True, use_voc_07=False):
