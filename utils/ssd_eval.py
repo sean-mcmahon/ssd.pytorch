@@ -12,6 +12,7 @@ import os
 import sys
 import argparse
 import pickle
+import json
 script_dir = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.dirname(script_dir))
 # from .eval import Timer, voc_ap, parse_rec
@@ -24,6 +25,7 @@ if sys.version_info[0] == 2:
 else:
     import xml.etree.ElementTree as ET
 
+
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
 
@@ -34,7 +36,7 @@ def get_args():
     parser.add_argument('--trained_model',
                         default='/home/sean/src/ssd_pytorch/weights/ssd300_mAP_77.43_v2.pth',
                         type=str, help='Trained state_dict file path to open')
-    parser.add_argument('--save_path', default='myeval/', type=str,
+    parser.add_argument('--save_path', default='myeval2/', type=str,
                         help='Dir to save results')
     parser.add_argument('--top_k', default=5, type=int,
                         help='Further restrict the number of predictions to parse')
@@ -84,6 +86,9 @@ def check_dets(all_bboxes, dets_dir, dataset, out_dir):
     # vbb3name += 'detections.pkl'
     # with open(vbb3name, 'rb') as h:
     #     voc_bb3 = pickle.load(h)
+
+
+
     vbb_orign = '/home/sean/src/ssd_pytorch/ssd300_120000/test/detections.pkl'
     with open(vbb_orign, 'rb') as j:
         vbb_orig = pickle.load(j)
@@ -95,7 +100,11 @@ def check_dets(all_bboxes, dets_dir, dataset, out_dir):
     # cmp_bboxes(voc_bb, voc_bb2)
     # print('cmp bb with bb3')
     # cmp_bboxes(all_bboxes, voc_bb3)
-    cmp_bboxes(all_bboxes, vbb_orig)
+    # Convert back to original format
+    nbb = [[all_bboxes[ii][jj][0] for jj in range(len(all_bboxes[0]))] for ii in range(len(all_bboxes))]
+    assert isinstance(nbb[5][999], np.ndarray)
+    assert len(nbb[5][999]) == 3
+    cmp_bboxes(nbb, vbb_orig)
     # print('\n' + '='*50 + '\n')
     # raise Exception(' ')
     # cmp_bboxes(all_bboxes, voc_bb)
@@ -192,6 +201,10 @@ def write_class_dets(bboxes, dataset, out_dir):
                 dets = bboxes[cls_id + 1][im_id]
                 if dets == []:
                     continue
+                if isinstance(dets, list):
+                    assert os.path.isfile(dets[1])
+                    assert name == dets[1]
+                    dets = dets[0]
                 for k in range(dets.shape[0]):
                     f.write('{:s} {:.3f} {:.1f} {:.1f} {:.1f} {:.1f}\n'.
                             format(name, dets[k, -1],
@@ -200,12 +213,13 @@ def write_class_dets(bboxes, dataset, out_dir):
     return dets_dir
 
 
-def write_class_labels(all_targets, dataset, out_dir):
+def check_annots(all_targets, dataset, out_dir):
     def parse_rec(filename):
         """
         Parse a PASCAL VOC xml file. From:
         https://github.com/amdegroot/ssd.pytorch/blob/master/eval.py
         """
+        assert os.path.isfile(filename), 'Invalid: "{}"'.format(filename)
         tree = ET.parse(filename)
         objects = []
         for obj in tree.findall('object'):
@@ -225,30 +239,83 @@ def write_class_labels(all_targets, dataset, out_dir):
     voc_root = '/home/sean/data/VOCdevkit'
     annopath = os.path.join(voc_root, 'VOC2007', 'Annotations', '%s.xml')
     imagenames = [dataset.pull_image_name(id_) for id_ in range(len(dataset))]
-    image_ids = [os.path.basename(os.path.splitext(name)[0]) for name in imagenames]
-    cachefile = '/home/sean/data/VOCdevkit/VOC2007/annotations_cache/annots.pkl'
-    cachefile = '/home/sean/fiction.eww'
+    image_ids = [os.path.basename(os.path.splitext(name)[0])
+                 for name in imagenames]
+    # cachefile = '/home/sean/data/VOCdevkit/VOC2007/annotations_cache/annots.pkl'
+    cachedir = os.path.join(out_dir, 'labels')
+    if not os.path.isdir(cachedir):
+        os.mkdir(cachedir)
+    cachefile = os.path.join(cachedir, 'annots.pkl')
     if not os.path.isfile(cachefile):
         # load annots
         recs = {}
-        for i, imagename in enumerate(imagenames):
+        for i, imagename in enumerate(image_ids):
             recs[imagename] = parse_rec(annopath % (imagename))
             if i % 100 == 0:
                 print('Reading annotation for {:d}/{:d}'.format(
-                    i + 1, len(imagenames)))
+                    i + 1, len(image_ids)))
+        with open(cachefile, 'wb') as f:
+            pickle.dump(recs, f)
     else:
         with open(cachefile, 'rb') as f:
             recs = pickle.load(f)
 
     for cls_id, classname in enumerate(dataset.classes):
+        print('Checking "{}" annotations {}/{}'.format(classname, cls_id + 1,
+                                                       len(dataset.classes)))
         voc_cls_rec, voc_npos = get_voc_class_dict(classname, image_ids, recs)
         my_cls_rec, m_npos = get_class_dict(cls_id, imagenames, all_targets)
-        raise NotImplementedError
+
+        e_str = 'Different number of class instances. m_npos = {}. voc_npos = {}'
+        assert m_npos == voc_npos, e_str.format(m_npos, voc_npos)
+
+        e_str = 'len(my_cls_rec) = {}. len(voc_cls_rec) = {}'
+        assert len(my_cls_rec) == len(voc_cls_rec), e_str.format(
+            len(my_cls_rec), len(voc_cls_rec))
+
+        for imname, img_id in zip(imagenames, image_ids):
+            voc_inst = voc_cls_rec[img_id]
+            diff_ind = np.where(voc_inst['difficult'] == False)[0]
+            voc_det = [voc_inst['det'][i] for i in diff_ind]
+            my_inst = my_cls_rec[imname]
+
+            if voc_inst['det'] == [] and my_inst['det'] == []:
+                continue
+            if np.all(voc_inst['difficult']) and my_inst['det'] == []:
+                continue
+
+            e = 'Dets mismatch. \nmy_inst={}\nvoc_inst={}'.format(
+                my_inst['det'], voc_det)
+            info = '\nvoc_inst["det"]={}  diff_ind={}'.format(
+                voc_inst['det'], diff_ind)
+            assert np.array_equal(
+                my_inst['det'], voc_det), e + info
+
+            e = 'my bboxes ({}). vox boxes ({})'.format(
+                np.shape(my_inst['bbox']), np.shape(voc_inst['bbox'][diff_ind]))
+            assert my_inst['bbox'].shape == voc_inst['bbox'][diff_ind].shape, e
+
+            e = '\nmy_inst[bboxes] = {}\nvoc_inst[bboxes][diff_ind] = {}'.format(
+                my_inst['bbox'], voc_inst['bbox'][diff_ind])
+            vocbb = '\nvoc bboxes = {}'.format(voc_inst['bbox'])
+            assert np.any(abs(my_inst['bbox'] - voc_inst['bbox']
+                              [diff_ind]) <= 1.0), e + vocbb
 
 
+def write_class_labels(all_targets, dataset, out_dir):
+    assert os.path.isdir(out_dir), 'Invalid dir: "%s"' % out_dir
+    cls_label_path = os.path.join(out_dir, 'class_labels')
+    imagenames = [dataset.pull_image_name(id_) for id_ in range(len(dataset))]
+    if not os.path.isdir(cls_label_path):
+        os.mkdir(cls_label_path)
+    fname = os.path.join(cls_label_path, '{}_labels.txt')
+    for cls_id, classname in enumerate(dataset.classes):
+        my_cls_rec, m_npos = get_class_dict(cls_id, imagenames, all_targets)
+        with open(fname.format(classname), 'rb') as j:
+            json.dump(m_npos, j)
+            json.dumps(my_cls_rec, j, indent=3)
+    return cls_label_path
 
-def check_annots(all_targets, dets_dir, dataset, out_dir):
-    raise NotImplementedError
 
 def get_class_dict(cls_id, imagenames, targets):
     '''
@@ -263,7 +330,6 @@ def get_class_dict(cls_id, imagenames, targets):
         npos += len(cls_labels)
         class_recs[imagename] = {'bbox': bbox, 'det': det}
     return class_recs, npos
-
 
 
 def get_voc_class_dict(classname, imagenames, recs):
@@ -317,7 +383,9 @@ def eval_ssd(data_iter, network, save_path, cuda=True, use_voc_07=False):
     # label_dir = write_class_labels(all_targets, data_iter, save_path)
     if 'voc' in data_iter.__class__.__name__.lower():
         # check detections and labels against those created from eval.py
-        check_dets(all_bboxes, det_dir, data_iter, save_path)
+        # check_dets(all_bboxes, det_dir, data_iter, save_path)
+        check_annots(all_targets, data_iter, save_path)
+        print('-' * 20, '\nAll Checks Passed!')
 
     print('Calulating Metrics...')
 
