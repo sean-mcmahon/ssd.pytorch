@@ -16,6 +16,7 @@ import json
 script_dir = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.dirname(script_dir))
 # from .eval import Timer, voc_ap, parse_rec
+from eval import voc_ap
 from metrics import getDetandGT
 from ssd import build_ssd
 from data import MiningDataset, MINING_CLASSES, MiningAnnotationTransform
@@ -87,8 +88,6 @@ def check_dets(all_bboxes, dets_dir, dataset, out_dir):
     # with open(vbb3name, 'rb') as h:
     #     voc_bb3 = pickle.load(h)
 
-
-
     vbb_orign = '/home/sean/src/ssd_pytorch/ssd300_120000/test/detections.pkl'
     with open(vbb_orign, 'rb') as j:
         vbb_orig = pickle.load(j)
@@ -101,9 +100,18 @@ def check_dets(all_bboxes, dets_dir, dataset, out_dir):
     # print('cmp bb with bb3')
     # cmp_bboxes(all_bboxes, voc_bb3)
     # Convert back to original format
-    nbb = [[all_bboxes[ii][jj][0] for jj in range(len(all_bboxes[0]))] for ii in range(len(all_bboxes))]
+    # nbb = []
+    # for ii in range(len(all_bboxes)):
+    #     for jj in range(len(all_bboxes[0])):
+    #         if all_bboxes[ii][jj] == []:
+    #             all_bboxes[ii][jj] = []
+    #         else:
+    #             nbb.append(all_bboxes[ii][jj][0])
+    nbb = [[ [] if all_bboxes[ii][jj] == [] else all_bboxes[ii][jj][0] for jj in range(len(all_bboxes[0]))]
+           for ii in range(len(all_bboxes))]
     assert isinstance(nbb[5][999], np.ndarray)
-    assert len(nbb[5][999]) == 3
+    assert np.shape(nbb) == np.shape(all_bboxes)
+    assert np.array_equal(nbb[5][999], all_bboxes[5][999][0])
     cmp_bboxes(nbb, vbb_orig)
     # print('\n' + '='*50 + '\n')
     # raise Exception(' ')
@@ -122,15 +130,15 @@ def check_dets(all_bboxes, dets_dir, dataset, out_dir):
             voc_lines = f.readlines()
         with open(mydets.format(classname), 'r') as f:
             mylines = f.readlines()
-        myconf, my_s_scores, myBB, myim_ids = process_dets_txt(mylines)
+        myconf, my_s_scores, myBB, myim_ids = process_dets_txt(mylines, classname)
         myim_ids = [os.path.basename(os.path.splitext(x)[0]) for x in myim_ids]
 
-        vocconf, voc_s_scores, vocBB, vocim_ids = process_dets_txt(voc_lines)
+        vocconf, voc_s_scores, vocBB, vocim_ids = process_dets_txt(voc_lines, classname)
 
-        assert np.array_equal(myconf, vocconf), 'Confs not equal\n{}\n{}'.format(
+        assert np.allclose(myconf, vocconf, rtol=5e-3), 'Confs not equal\n{}\n{}'.format(
             bb_str('myconf', myconf), bb_str('vocconf', vocconf))
-        assert np.array_equal(
-            my_s_scores, voc_s_scores), 'Sorted Scores not equal\n{}\n{}'.format(
+        assert np.allclose(
+            my_s_scores, voc_s_scores, rtol=5e-3), 'Sorted Scores not equal\n{}\n{}'.format(
             bb_str('my_s_scores', my_s_scores), bb_str('voc_s_scores', voc_s_scores))
 
         assert np.array_equal(
@@ -147,7 +155,7 @@ def check_dets(all_bboxes, dets_dir, dataset, out_dir):
     return True
 
 
-def process_dets_txt(dets_lines):
+def process_dets_txt(dets_lines, classname):
     '''
     get useful information from detection text files
     Code from https://github.com/amdegroot/ssd.pytorch/blob/master/eval.py
@@ -167,7 +175,7 @@ def process_dets_txt(dets_lines):
 
         return confidence, sorted_scores, BB, image_ids
     else:
-        raise Exception('No lines found.')
+        raise Exception('No lines found. Check text file for class %s' % classname)
 
 
 def write_class_dets(bboxes, dataset, out_dir):
@@ -382,24 +390,96 @@ def eval_ssd(data_iter, network, save_path, cuda=True, use_voc_07=False):
     det_dir = write_class_dets(all_bboxes, data_iter, save_path)
     # label_dir = write_class_labels(all_targets, data_iter, save_path)
     if 'voc' in data_iter.__class__.__name__.lower():
+        pass
         # check detections and labels against those created from eval.py
         # check_dets(all_bboxes, det_dir, data_iter, save_path)
-        check_annots(all_targets, data_iter, save_path)
-        print('-' * 20, '\nAll Checks Passed!')
+        # check_annots(all_targets, data_iter, save_path)
+        # print('-' * 20, '\nAll Checks Passed!\n', '-' * 20)
 
     print('Calulating Metrics...')
 
     aps = []
-    # for i, cls in enumerate(data_iter.classes):
-    #     prec, rec, ap = calcMetrics(
-    #         all_bboxes, all_targets, cls, data_iter, thresh=0.5, use_07_metric=use_voc_07)
-    #     aps += [ap]
-    #     print('AP for {} = {:.4f}'.format(cls, ap))
-    #     fname = os.path.join(save_path, cls + '_pr.txt')
-    #     with open(fname, 'w') as f:
-    #         f.write('Class: {}\nrec: {}\nprec: {}\nap: {}'.format(
-    #             cls, rec, prec, ap))
-    # print('Metrics saves to "{}"'.format(save_path))
+    for i, cls in enumerate(data_iter.classes):
+        prec, rec, ap = calcMetrics(
+            det_dir, all_targets, cls, data_iter, ovthresh=0.5, use_07_metric=use_voc_07)
+        aps += [ap]
+        print('AP for {} = {:.4f}'.format(cls, ap))
+        fname = os.path.join(save_path, cls + '_pr.txt')
+        with open(fname, 'w') as f:
+            f.write('Class: {}\nrec: {}\nprec: {}\nap: {}'.format(
+                cls, rec, prec, ap))
+    print('~~~~~~~~')
+    print('Mean AP = {:.4f}'.format(np.mean(aps)))
+    print(' ')
+    print('--------------------------------------------------------------')
+    print('Results computed with the **unofficial** Python eval code.')
+    print('Results should be very close to the official MATLAB eval code.')
+    print('--------------------------------------------------------------')
+    fname = os.path.join(save_path, 'mean_ap.txt')
+    with open(fname, 'w') as f:
+        f.write('Mean AP = {:.4f}'.format(np.mean(aps)))
+    print('Metrics saves to "{}"'.format(save_path))
+
+def calcMetrics(dets_file_dir, gt_labels, classname, dataset, ovthresh=0.5, use_07_metric=False):
+    cls_id = dataset.classes.index(classname)
+    detsfile = os.path.join(dets_file_dir, '{}_dets.txt'.format(classname))
+    imagenames = [dataset.pull_image_name(id_) for id_ in range(len(dataset))]
+
+    with open(detsfile, 'r') as f:
+        detlines = f.readlines()
+    conf, soreed_scores, BB, image_per_det = process_dets_txt(detlines, classname)
+    class_recs, npos = get_class_dict(cls_id, imagenames, gt_labels)
+
+    num_dets = len(image_per_det)
+    tp = np.zeros(num_dets)
+    fp = np.zeros(num_dets)
+
+    for d in range(num_dets):
+        R = class_recs[image_per_det[d]]
+        bb = BB[d, :].astype(float)
+        ovmax = -np.inf
+        BBGT = R['bbox'].astype(float)
+        if BBGT.size > 0:
+            # compute overlaps
+            # intersection
+            ixmin = np.maximum(BBGT[:, 0], bb[0])
+            iymin = np.maximum(BBGT[:, 1], bb[1])
+            ixmax = np.minimum(BBGT[:, 2], bb[2])
+            iymax = np.minimum(BBGT[:, 3], bb[3])
+            iw = np.maximum(ixmax - ixmin, 0.)
+            ih = np.maximum(iymax - iymin, 0.)
+            inters = iw * ih
+            uni = ((bb[2] - bb[0]) * (bb[3] - bb[1]) +
+                   (BBGT[:, 2] - BBGT[:, 0]) *
+                   (BBGT[:, 3] - BBGT[:, 1]) - inters)
+            overlaps = inters / uni
+            ovmax = np.max(overlaps)
+            jmax = np.argmax(overlaps)
+
+        if ovmax > ovthresh:
+            if 'difficult' not in R:
+                if not R['det'][jmax]:
+                    tp[d] = 1.
+                    R['det'][jmax] = 1
+                else:
+                    fp[d] = 1.
+            elif not R['difficult'][jmax]:
+                if not R['det'][jmax]:
+                    tp[d] = 1.
+                    R['det'][jmax] = 1
+                else:
+                    fp[d] = 1.
+        else:
+            fp[d] = 1.
+    # compute precision recall
+    fp = np.cumsum(fp)
+    tp = np.cumsum(tp)
+    rec = tp / float(npos)
+    # avoid divide by zero in case the first detection matches a difficult
+    # ground truth
+    prec = tp / np.maximum(tp + fp, np.finfo(np.float64).eps)
+    ap = voc_ap(rec, prec, use_07_metric)
+    return rec, prec, ap
 
 
 def main(args):
