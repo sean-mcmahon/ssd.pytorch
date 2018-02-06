@@ -88,7 +88,7 @@ target_transforms = {'voc': AnnotationTransform,
                      'mining': MiningAnnotationTransform}
 
 print('Loading Dataset...')
-
+assert os.path.exists(args.data_root), 'root invalid "%s"' % args.data_root
 dataset = data_iters[args.data_set](
     args.data_root, train_sets[args.data_set], augmentators[args.data_set],
     target_transforms[args.data_set]())
@@ -96,8 +96,10 @@ dataset = data_iters[args.data_set](
 num_classes = dataset.num_classes()
 
 if args.visdom:
-    import visdom
-    viz = visdom.Visdom()
+    from tensorboardX import SummaryWriter
+    # import visdom
+    # viz = visdom.Visdom()
+    writer = SummaryWriter(comment='ssd{}_{}'.format(ssd_dim, args.data_set))
 
 ssd_net = build_ssd('train', 300, num_classes)
 net = ssd_net
@@ -116,6 +118,15 @@ else:
 
 if args.cuda:
     net = net.cuda()
+
+if args.visdom:
+    dummy_in = Variable(torch.rand(batch_size, 3, ssd_dim, ssd_dim))
+    writer.add_graph(net, (dummy_in, ))
+    # with SummaryWriter(comment='ssd300') as w:
+    #     w.add_graph(net, (dummy_in, ), verbose=True)
+    # with SummaryWriter(comment='ssd300onix') as w:
+    #     torch.onnx.export(net, dummy_in, "test.proto", verbose=True)
+    #     w.add_graph_onnx("test.proto")
 
 
 def xavier(param):
@@ -153,28 +164,6 @@ def train():
     epoch_size = len(dataset) // args.batch_size
     print('Training SSD on', dataset.name)
     step_index = 0
-    if args.visdom:
-        # initialize visdom loss plot
-        lot = viz.line(
-            X=torch.zeros((1,)).cpu(),
-            Y=torch.zeros((1, 3)).cpu(),
-            opts=dict(
-                xlabel='Iteration',
-                ylabel='Loss',
-                title='Current SSD Training Loss',
-                legend=['Loc Loss', 'Conf Loss', 'Loss']
-            )
-        )
-        epoch_lot = viz.line(
-            X=torch.zeros((1,)).cpu(),
-            Y=torch.zeros((1, 3)).cpu(),
-            opts=dict(
-                xlabel='Epoch',
-                ylabel='Loss',
-                title='Epoch SSD Training Loss',
-                legend=['Loc Loss', 'Conf Loss', 'Loss']
-            )
-        )
     batch_iterator = None
     data_loader = data.DataLoader(dataset, batch_size, num_workers=args.num_workers,
                                   shuffle=True, collate_fn=detection_collate, pin_memory=True)
@@ -186,13 +175,9 @@ def train():
             step_index += 1
             adjust_learning_rate(optimizer, args.gamma, step_index)
             if args.visdom:
-                viz.line(
-                    X=torch.ones((1, 3)).cpu() * epoch,
-                    Y=torch.Tensor([loc_loss, conf_loss,
-                                    loc_loss + conf_loss]).unsqueeze(0).cpu() / epoch_size,
-                    win=epoch_lot,
-                    update='append'
-                )
+                l_d = {'total_loss': loc_loss + conf_loss, 'loc_loss': loc_loss,
+                       'conf_loss': conf_loss}
+                writer.add_scalars('loss/l_per_stepval', l_d, epoch)
             # reset epoch loss counters
             loc_loss = 0
             conf_loss = 0
@@ -224,29 +209,19 @@ def train():
             print('Timer: %.4f sec.' % (t1 - t0))
             print('iter ' + repr(iteration) + ' || Loss: %.4f ||' %
                   (loss.data[0]), end=' ')
+            if args.visdom:
+                for name, param in net.named_parameters():
+                    writer.add_histogram(name, param.clone().cpu().data.numpy(), iteration)
 
             if args.visdom:
                 if args.send_images_to_visdom:
                     random_batch_index = np.random.randint(images.size(0))
-                    viz.image(images.data[random_batch_index].cpu().numpy())
-                viz.save(['main'])
+                    writer.add_image('aug_image', images.data[random_batch_index].cpu(), iteration)
         if args.visdom:
-            viz.line(
-                X=torch.ones((1, 3)).cpu() * iteration,
-                Y=torch.Tensor([loss_l.data[0], loss_c.data[0],
-                                loss_l.data[0] + loss_c.data[0]]).unsqueeze(0).cpu(),
-                win=lot,
-                update='append'
-            )
-            # hacky fencepost solution for 0th epoch plot
-            if iteration == 0:
-                viz.line(
-                    X=torch.zeros((1, 3)).cpu(),
-                    Y=torch.Tensor([loc_loss, conf_loss,
-                                    loc_loss + conf_loss]).unsqueeze(0).cpu(),
-                    win=epoch_lot,
-                    update=True
-                )
+            total_loss = loss_l.data[0] + loss_c.data[0]
+            losses_d = {'total_loss': total_loss, 'loc_loss': loss_l.data[0],
+                        'conf_loss': loss_c.data[0]}
+            writer.add_scalars('loss/l_per_iter', losses_d, iteration)
         if iteration % 100 == 0:
             print('Saving state, iter:', iteration)
             sstr = os.path.join(
