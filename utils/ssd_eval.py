@@ -412,7 +412,7 @@ def eval_ssd(data_iter, network, save_path, cuda=True, use_voc_07=False):
     print('Mean AP = {:.4f}'.format(np.mean(aps)))
     print(' ')
     print('--------------------------------------------------------------')
-    print('Results computed with the **unofficial** Python eval code.')
+    print('Results computed with my NEW **unofficial** Python eval code.')
     print('Results should be very close to the official MATLAB eval code.')
     print('--------------------------------------------------------------')
     fname = os.path.join(save_path, 'mean_ap.txt')
