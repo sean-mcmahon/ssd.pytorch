@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
 import torch.nn.init as init
+import torchvision.utils as vutils
 import argparse
 from torch.autograd import Variable
 import torch.utils.data as data
@@ -14,10 +15,15 @@ from layers.modules import MultiBoxLoss
 from ssd import build_ssd
 import numpy as np
 import time
+import subprocess
+from tensorboardX import SummaryWriter
+import socket
+from datetime import datetime
 
 
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
+
 
 parser = argparse.ArgumentParser(
     description='Single Shot MultiBox Detector Training')
@@ -27,7 +33,7 @@ parser.add_argument('--basenet', default='vgg16_reducedfc.pth',
                     help='pretrained base model')
 parser.add_argument('--jaccard_threshold', default=0.5,
                     type=float, help='Min Jaccard index for matching')
-parser.add_argument('--batch_size', default=16, type=int,
+parser.add_argument('--batch_size', default=32, type=int,
                     help='Batch size for training')
 parser.add_argument('--resume', default=None, type=str,
                     help='Resume from checkpoint')
@@ -52,12 +58,13 @@ parser.add_argument('--visdom', default=False, type=str2bool,
                     help='Use visdom to for loss visualization')
 parser.add_argument('--send_images_to_visdom', type=str2bool, default=False,
                     help='Sample a random image from each 10th batch, send it to visdom after augmentations step')
-parser.add_argument('--save_folder', default='weights/',
+parser.add_argument('--save_folder', default='/home/sean/Documents/ssd/',
                     help='Location to save checkpoint models')
-parser.add_argument('--weights_folder', default='weights/')
+parser.add_argument('--weights_folder',
+                    default='/home/sean/src/ssd_pytorch/weights/')
 parser.add_argument('--data_root', default=VOCroot,
                     help='Location of VOC root directory')
-parser.add_argument('--data_set', default='voc', type=str)
+parser.add_argument('--dataset', default='voc', type=str)
 args = parser.parse_args()
 
 if args.cuda and torch.cuda.is_available():
@@ -69,17 +76,22 @@ cfg = (v1, v2)[args.version == 'v2']
 
 if not os.path.exists(args.save_folder):
     os.mkdir(args.save_folder)
+save_weights = os.path.join(args.save_folder, 'weights')
+if not os.path.isdir(save_weights):
+    os.mkdir(save_weights)
 
 ssd_dim = 300  # only support 300 now
 batch_size = args.batch_size
 accum_batch_size = 32
 iter_size = accum_batch_size / batch_size
 max_iter = args.iterations
-# stepvalues = (80000, 100000, 120000)
-stepvalues = (150, 300, 450, 600)
+if args.dataset == 'mining':
+    stepvalues = (150, 300, 450, 600)
+else:
+    stepvalues = (80000, 100000, 120000)
 
 train_sets = {'voc': [('2007', 'trainval'), ('2012', 'trainval')],
-              'mining': 'train_gopro1_scraped_all_labelled.json'}
+              'mining': 'split2/train_gopro2_scraped.json'}
 rgb_means = {'voc': (104, 117, 123), 'mining': (65, 69, 76)}
 data_iters = {'voc': VOCDetection, 'mining': MiningDataset}
 augmentators = {'voc': SSDAugmentation(ssd_dim, rgb_means['voc']),
@@ -89,17 +101,30 @@ target_transforms = {'voc': AnnotationTransform,
 
 print('Loading Dataset...')
 assert os.path.exists(args.data_root), 'root invalid "%s"' % args.data_root
-dataset = data_iters[args.data_set](
-    args.data_root, train_sets[args.data_set], augmentators[args.data_set],
-    target_transforms[args.data_set]())
+dataset = data_iters[args.dataset](
+    args.data_root, train_sets[args.dataset], augmentators[args.dataset],
+    target_transforms[args.dataset]())
 
 num_classes = dataset.num_classes()
 
+if os.path.isdir('/home/sean'):
+    h_dir = '/home/sean'
+else:
+    h_dir = '/home/n8307628'
+
 if args.visdom:
-    from tensorboardX import SummaryWriter
-    # import visdom
-    # viz = visdom.Visdom()
-    writer = SummaryWriter(comment='ssd{}_{}'.format(ssd_dim, args.data_set))
+    path = os.path.join(args.save_folder, 'runs')
+    if not os.path.isdir(path):
+        os.mkdir(path)
+    current_time = datetime.now().strftime('%b%d_%H-%M-%S')
+    logname = "{}_{}_ssd{}_{}".format(current_time, socket.gethostname(),
+                                      ssd_dim, args.dataset)
+    logdir = os.path.join(path, logname)
+    print('Logging run to "%s"' % logdir)
+    # if not os.path.isdir(logdir):
+    writer = SummaryWriter(log_dir=logdir)
+    # else:
+    # writer = SummaryWriter(log_dir=logdir, comment='ssd{}_{}'.format(ssd_dim, args.dataset))
 
 ssd_net = build_ssd('train', 300, num_classes)
 net = ssd_net
@@ -110,9 +135,12 @@ if args.cuda:
 
 if args.resume:
     print('Resuming training, loading {}...'.format(args.resume))
+    assert os.path.isfile(args.resume), 'Invalid "%s"' % args.resume
     ssd_net.load_weights(args.resume)
 else:
-    vgg_weights = torch.load(os.path.join(args.weights_folder, args.basenet))
+    weights_n = os.path.join(args.weights_folder, args.basenet)
+    assert os.path.isfile(weights_n), 'Invalid "%s"' % weights_n
+    vgg_weights = torch.load(weights_n)
     print('Loading base network...')
     ssd_net.vgg.load_state_dict(vgg_weights)
 
@@ -165,8 +193,9 @@ def train():
     print('Training SSD on', dataset.name)
     step_index = 0
     batch_iterator = None
-    data_loader = data.DataLoader(dataset, batch_size, num_workers=args.num_workers,
-                                  shuffle=True, collate_fn=detection_collate, pin_memory=True)
+    data_loader = data.DataLoader(
+        dataset, batch_size, num_workers=args.num_workers,
+        shuffle=True, collate_fn=detection_collate, pin_memory=True)
     for iteration in range(args.start_iter, max_iter):
         if (not batch_iterator) or (iteration % epoch_size == 0):
             # create batch iterator
@@ -207,16 +236,25 @@ def train():
         conf_loss += loss_c.data[0]
         if iteration % 10 == 0:
             print('Timer: %.4f sec.' % (t1 - t0))
-            print('iter ' + repr(iteration) + ' || Loss: %.4f ||' %
-                  (loss.data[0]), end=' ')
+            print('iter ' + repr(iteration) + ' || Loss: %.4f ||' % (
+                loss.data[0]), end=' ')
             if args.visdom:
                 for name, param in net.named_parameters():
-                    writer.add_histogram(name, param.clone().cpu().data.numpy(), iteration)
+                    writer.add_histogram(
+                        name.replace('.', '/'), param.clone().cpu().data.numpy(), iteration)
 
             if args.visdom:
                 if args.send_images_to_visdom:
+                    if batch_size > 10:
+                        imgx = vutils.make_grid(images.data.cpu()[:10, :, :],
+                                                normalize=True, scale_each=True)
+                    else:
+                        imgx = vutils.make_grid(images.data.cpu(),
+                                                normalize=True, scale_each=True)
                     random_batch_index = np.random.randint(images.size(0))
-                    writer.add_image('aug_image', images.data[random_batch_index].cpu(), iteration)
+
+                    writer.add_image(
+                        'aug_image', imgx, iteration)
         if args.visdom:
             total_loss = loss_l.data[0] + loss_c.data[0]
             losses_d = {'total_loss': total_loss, 'loc_loss': loss_l.data[0],
@@ -225,10 +263,10 @@ def train():
         if iteration % 100 == 0:
             print('Saving state, iter:', iteration)
             sstr = os.path.join(
-                args.save_folder, 'ssd{}_0712_{}_{}.pth'.format(
-                    str(ssd_dim), repr(iteration), args.data_set))
+                save_weights, 'ssd{}_0712_{}_{}.pth'.format(
+                    str(ssd_dim), repr(iteration), args.dataset))
             torch.save(ssd_net.state_dict(), sstr)
-    torch.save(ssd_net.state_dict(), args.save_folder +
+    torch.save(ssd_net.state_dict(), save_weights +
                'ssd' + str(ssd_dim) + args.version + '.pth')
 
 
