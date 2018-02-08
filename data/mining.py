@@ -93,6 +93,7 @@ class MiningDataset(VOCDetection):
                     '/home/sean//hpc-home', expanduser("~"))
             else:
                 n_name = datum['filename']
+            n_name = n_name.replace('//', '/')
             self.im_names.append(str(n_name))
             self.targets.append(datum['annotations'])
             # self.targets += [self.anno2bbox(bb) for bb in
@@ -132,7 +133,13 @@ class MiningDataset(VOCDetection):
         target = self.targets[index]
         # Beause I don't trust opencv to handle invalid file names.
         assert os.path.isfile(img_name), 'Invalid file "{}"'.format(img_name)
-        img = cv2.imread(img_name)
+        img = cv2.imread(img_name, cv2.IMREAD_COLOR)
+        if img is None:
+            print('Image read was "Nonetype" - "{}"'.format(img_name))
+            img = cv2.imread(img_name, cv2.IMREAD_COLOR)
+            if img is None:
+                import pdb; pdb.set_trace()
+                print('image is still none!')
         height, width, channels = img.shape
 
         if self.target_transform is not None:
