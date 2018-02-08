@@ -22,6 +22,7 @@ def str2bool(v):
     else:
         return v.lower() in ("yes", "true", "t", "1")
 
+
 parser = argparse.ArgumentParser(description='Single Shot MultiBox Detection')
 parser.add_argument('--trained_model', default='weights/ssd_300_VOC0712.pth',
                     type=str, help='Trained state_dict file path to open')
@@ -55,7 +56,7 @@ def test_net(save_folder, net, cuda, testset, transform, thresh,
     print('\nPredictions based on threshold of ' +
           '{}. {} saving prediction images...'.format(
               thresh, 'Will be' if save_pred_img else 'NOT'))
-    print('-'*50)
+    print('-' * 50)
     for i in range(num_images):
         print('Testing image {:d}/{:d}....'.format(i + 1, num_images))
         img = testset.pull_image(i)
@@ -136,6 +137,26 @@ def visRes(det, img, save_path, name, conf=False):
             draw.text(bbox[0:2], bbox[4], font=fnt, fill=(0, 200, 0))
     img.save(os.path.join(save_path, 'img_%s.png' % name))
 
+
+def visualiseDataset(dataset, save_path):
+    if not os.path.isdir(save_path):
+        os.mkdir(save_path)
+    num_images = len(dataset)
+    for i in range(num_images):
+        name = dataset.pull_image_name(i)
+        print(
+            'Saving annoation image {:d}/{:d} ("{}")'.format(i + 1, num_images, name))
+        img = dataset.pull_image(i)
+        img_id, annotation = dataset.pull_anno(i)
+        anno_list = []
+        for box in np.array(annotation):
+            coords = box[0:4].tolist()
+            label_name = labelmap[int(box[-1])]
+            score = 1.0
+            anno_list.append(coords + [label_name] + [score])
+        visRes(anno_list, img, save_path, str(i))
+
+
 if __name__ == '__main__':
     save_folder = args.save_folder + '_%s' % args.dataset
     if not os.path.exists(save_folder):
@@ -161,6 +182,7 @@ if __name__ == '__main__':
         net = net.cuda()
         cudnn.benchmark = True
     # evaluation
-    test_net(save_folder, net, args.cuda, testset,
-             BaseTransform(net.size, means[args.dataset]),
-             thresh=args.visual_threshold, save_pred_img=args.vis_preds)
+    visualiseDataset(testset, save_folder + '_labels')
+    # test_net(save_folder, net, args.cuda, testset,
+    #          BaseTransform(net.size, means[args.dataset]),
+    #          thresh=args.visual_threshold, save_pred_img=args.vis_preds)
