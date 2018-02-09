@@ -19,142 +19,11 @@ import subprocess
 from tensorboardX import SummaryWriter
 import socket
 from datetime import datetime
+import atexit
 
 
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
-
-
-parser = argparse.ArgumentParser(
-    description='Single Shot MultiBox Detector Training')
-parser.add_argument('--version', default='v2',
-                    help='conv11_2(v2) or pool6(v1) as last layer')
-parser.add_argument('--basenet', default='vgg16_reducedfc.pth',
-                    help='pretrained base model')
-parser.add_argument('--jaccard_threshold', default=0.5,
-                    type=float, help='Min Jaccard index for matching')
-parser.add_argument('--batch_size', default=32, type=int,
-                    help='Batch size for training')
-parser.add_argument('--resume', default=None, type=str,
-                    help='Resume from checkpoint')
-parser.add_argument('--num_workers', default=2, type=int,
-                    help='Number of workers used in dataloading')
-parser.add_argument('--iterations', default=120000, type=int,
-                    help='Number of training iterations')
-parser.add_argument('--start_iter', default=0, type=int,
-                    help='Begin counting iterations starting from this value (should be used with resume)')
-parser.add_argument('--cuda', default=True, type=str2bool,
-                    help='Use cuda to train model')
-parser.add_argument('--lr', '--learning-rate', default=1e-3,
-                    type=float, help='initial learning rate')
-parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
-parser.add_argument('--weight_decay', default=5e-4,
-                    type=float, help='Weight decay for SGD')
-parser.add_argument('--gamma', default=0.1, type=float,
-                    help='Gamma update for SGD')
-parser.add_argument('--log_iters', default=True, type=bool,
-                    help='Print the loss at each iteration')
-parser.add_argument('--visdom', default=False, type=str2bool,
-                    help='Use visdom to for loss visualization')
-parser.add_argument('--send_images_to_visdom', type=str2bool, default=False,
-                    help='Sample a random image from each 10th batch, send it to visdom after augmentations step')
-parser.add_argument('--save_folder', default='/home/sean/Documents/ssd/',
-                    help='Location to save checkpoint models')
-parser.add_argument('--weights_folder',
-                    default='/home/sean/src/ssd_pytorch/weights/')
-parser.add_argument('--data_root', default=VOCroot,
-                    help='Location of VOC root directory')
-parser.add_argument('--dataset', default='voc', type=str)
-args = parser.parse_args()
-
-if args.cuda and torch.cuda.is_available():
-    torch.set_default_tensor_type('torch.cuda.FloatTensor')
-else:
-    torch.set_default_tensor_type('torch.FloatTensor')
-
-cfg = (v1, v2)[args.version == 'v2']
-
-if not os.path.exists(args.save_folder):
-    os.mkdir(args.save_folder)
-save_weights = os.path.join(args.save_folder, 'weights')
-if not os.path.isdir(save_weights):
-    os.mkdir(save_weights)
-
-ssd_dim = 300  # only support 300 now
-batch_size = args.batch_size
-accum_batch_size = 32
-iter_size = accum_batch_size / batch_size
-max_iter = args.iterations
-if args.dataset == 'mining':
-    stepvalues = (150, 300, 450, 600)
-else:
-    stepvalues = (80000, 100000, 120000)
-
-train_sets = {'voc': [('2007', 'trainval'), ('2012', 'trainval')],
-              'mining': 'split2/train_gopro2_scraped.json'}
-rgb_means = {'voc': (104, 117, 123), 'mining': (65, 69, 76)}
-data_iters = {'voc': VOCDetection, 'mining': MiningDataset}
-augmentators = {'voc': SSDAugmentation(ssd_dim, rgb_means['voc']),
-                'mining': SSDMiningAugmentation(ssd_dim, rgb_means['mining'])}
-target_transforms = {'voc': AnnotationTransform,
-                     'mining': MiningAnnotationTransform}
-
-print('Loading Dataset...')
-assert os.path.exists(args.data_root), 'root invalid "%s"' % args.data_root
-dataset = data_iters[args.dataset](
-    args.data_root, train_sets[args.dataset], augmentators[args.dataset],
-    target_transforms[args.dataset]())
-
-num_classes = dataset.num_classes()
-
-if os.path.isdir('/home/sean'):
-    h_dir = '/home/sean'
-else:
-    h_dir = '/home/n8307628'
-
-if args.visdom:
-    path = os.path.join(args.save_folder, 'runs')
-    if not os.path.isdir(path):
-        os.mkdir(path)
-    current_time = datetime.now().strftime('%b%d_%H-%M-%S')
-    logname = "{}_{}_ssd{}_{}".format(current_time, socket.gethostname(),
-                                      ssd_dim, args.dataset)
-    logdir = os.path.join(path, logname)
-    print('Logging run to "%s"' % logdir)
-    # if not os.path.isdir(logdir):
-    writer = SummaryWriter(log_dir=logdir)
-    # else:
-    # writer = SummaryWriter(log_dir=logdir, comment='ssd{}_{}'.format(ssd_dim, args.dataset))
-
-ssd_net = build_ssd('train', 300, num_classes)
-net = ssd_net
-
-if args.cuda:
-    net = torch.nn.DataParallel(ssd_net)
-    cudnn.benchmark = True
-
-if args.resume:
-    print('Resuming training, loading {}...'.format(args.resume))
-    assert os.path.isfile(args.resume), 'Invalid "%s"' % args.resume
-    ssd_net.load_weights(args.resume)
-else:
-    weights_n = os.path.join(args.weights_folder, args.basenet)
-    assert os.path.isfile(weights_n), 'Invalid "%s"' % weights_n
-    vgg_weights = torch.load(weights_n)
-    print('Loading base network...')
-    ssd_net.vgg.load_state_dict(vgg_weights)
-
-if args.cuda:
-    net = net.cuda()
-
-if args.visdom:
-    dummy_in = Variable(torch.rand(batch_size, 3, ssd_dim, ssd_dim))
-    writer.add_graph(net, (dummy_in, ))
-    # with SummaryWriter(comment='ssd300') as w:
-    #     w.add_graph(net, (dummy_in, ), verbose=True)
-    # with SummaryWriter(comment='ssd300onix') as w:
-    #     torch.onnx.export(net, dummy_in, "test.proto", verbose=True)
-    #     w.add_graph_onnx("test.proto")
 
 
 def xavier(param):
@@ -167,17 +36,25 @@ def weights_init(m):
         m.bias.data.zero_()
 
 
-if not args.resume:
-    print('Initializing weights...')
-    # initialize newly added layers' weights with xavier method
-    ssd_net.extras.apply(weights_init)
-    ssd_net.loc.apply(weights_init)
-    ssd_net.conf.apply(weights_init)
+def writeHyperparams(writer, args, others=None):
+    fam = '/params'
+    for a in vars(args):
+        litfam = os.path.join(fam, a)
+        writer.add_text(litfam, str(getattr(args, a)))
+    if others:
+        for key, item in others.items():
+            litfam = os.path.join(fam, key)
+            writer.add_text(litfam, str(item))
 
-optimizer = optim.SGD(net.parameters(), lr=args.lr,
-                      momentum=args.momentum, weight_decay=args.weight_decay)
-criterion = MultiBoxLoss(num_classes, 0.5, True, 0,
-                         True, 3, 0.5, False, args.cuda)
+
+def writeParamsTxt(filename, args, others=None):
+    with open(filename, 'w') as f:
+        for a in vars(args):
+            arg_val = str(getattr(args, a))
+            f.write('{}: {}\n'.format(a, arg_val))
+        if others is not None:
+            for key, item in others.items():
+                f.write('{}: {}\n'.format(key, str(item)))
 
 
 def train():
@@ -215,6 +92,9 @@ def train():
         # load train data
         images, targets = next(batch_iterator)
 
+        if torch.max(images) > 1:
+            print('Data is not normalized, max is {}'.format(torch.max(images)))
+
         if args.cuda:
             images = Variable(images.cuda())
             targets = [Variable(anno.cuda(), volatile=True)
@@ -241,7 +121,8 @@ def train():
             if args.visdom:
                 for name, param in net.named_parameters():
                     writer.add_histogram(
-                        name.replace('.', '/'), param.clone().cpu().data.numpy(), iteration)
+                        name.replace('.', '/'),
+                        param.clone().cpu().data.numpy(), iteration)
 
             if args.visdom:
                 if args.send_images_to_visdom:
@@ -281,4 +162,153 @@ def adjust_learning_rate(optimizer, gamma, step):
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(
+        description='Single Shot MultiBox Detector Training')
+    parser.add_argument('--version', default='v2',
+                        help='conv11_2(v2) or pool6(v1) as last layer')
+    parser.add_argument('--ssd_dim', default=300, type=int)
+    parser.add_argument('--basenet', default='/home/sean/src/ssd_pytorch/weights/vgg16_reducedfc.pth',
+                        help='pretrained base model')
+    parser.add_argument('--jaccard_threshold', default=0.5,
+                        type=float, help='Min Jaccard index for matching')
+    parser.add_argument('--batch_size', default=32, type=int,
+                        help='Batch size for training')
+    parser.add_argument('--resume', default=None, type=str,
+                        help='Resume from checkpoint')
+    parser.add_argument('--num_workers', default=2, type=int,
+                        help='Number of workers used in dataloading')
+    parser.add_argument('--iterations', default=120000, type=int,
+                        help='Number of training iterations')
+    parser.add_argument('--start_iter', default=0, type=int,
+                        help='Begin counting iterations starting from this value (should be used with resume)')
+    parser.add_argument('--cuda', default=True, type=str2bool,
+                        help='Use cuda to train model')
+    parser.add_argument('--lr', '--learning-rate', default=1e-3,
+                        type=float, help='initial learning rate')
+    parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
+    parser.add_argument('--weight_decay', default=5e-4,
+                        type=float, help='Weight decay for SGD')
+    parser.add_argument('--gamma', default=0.1, type=float,
+                        help='Gamma update for SGD')
+    parser.add_argument('--visdom', default=True, type=str2bool,
+                        help='Use visdom to for loss visualization')
+    parser.add_argument('--send_images_to_visdom', type=str2bool, default=True,
+                        help='Sample a random image from each 10th batch, send it to visdom after augmentations step')
+    parser.add_argument('--save_folder', default='/home/sean/Documents/ssd/',
+                        help='Location to save checkpoint models')
+    parser.add_argument('--data_root', default=VOCroot,
+                        help='Location of VOC root directory')
+    parser.add_argument('--dataset', default='voc', type=str)
+    args = parser.parse_args()
+
+    if args.cuda and torch.cuda.is_available():
+        torch.set_default_tensor_type('torch.cuda.FloatTensor')
+    else:
+        torch.set_default_tensor_type('torch.FloatTensor')
+
+    cfg = (v1, v2)[args.version == 'v2']
+
+    ssd_dim = args.ssd_dim  # only support 300 now
+    assert ssd_dim == 300
+    batch_size = args.batch_size
+    accum_batch_size = 32
+    iter_size = accum_batch_size / batch_size
+    max_iter = args.iterations
+    if args.dataset == 'mining':
+        stepvalues = (150, 300, 450, 600)
+    else:
+        stepvalues = (80000, 100000, 120000)
+
+    train_sets = {'voc': [('2007', 'trainval'), ('2012', 'trainval')],
+                  'mining': 'train_gopro1_scraped_all_labelled.json'}
+    rgb_means = {'voc': (104, 117, 123), 'mining': (65, 69, 76)}
+    data_iters = {'voc': VOCDetection, 'mining': MiningDataset}
+    augmentators = {'voc': SSDAugmentation(ssd_dim, rgb_means['voc']),
+                    'mining': SSDMiningAugmentation(ssd_dim, rgb_means['mining'])}
+    target_transforms = {'voc': AnnotationTransform,
+                         'mining': MiningAnnotationTransform}
+
+    print('Loading Dataset...')
+    assert os.path.exists(args.data_root), 'root invalid "%s"' % args.data_root
+    dataset = data_iters[args.dataset](
+        args.data_root, train_sets[args.dataset], augmentators[args.dataset],
+        target_transforms[args.dataset]())
+
+    num_classes = dataset.num_classes()
+
+    if os.path.isdir('/home/sean'):
+        h_dir = '/home/sean'
+    else:
+        h_dir = '/home/n8307628'
+
+    if not os.path.exists(args.save_folder):
+        os.mkdir(args.save_folder)
+    current_time = datetime.now().strftime('%b%d_%H-%M-%S')
+    jobname = "ssd{}_{}_{}_{}".format(
+        ssd_dim, args.dataset, current_time, socket.gethostname())
+    job_path = os.path.join(args.save_folder, jobname)
+    save_weights = os.path.join(job_path, 'weights')
+    if not os.path.isdir(save_weights):
+        os.makedirs(save_weights)
+
+    if args.visdom:
+        logpath = os.path.join(job_path, 'runs')
+        if not os.path.isdir(logpath):
+            os.makedirs(logpath)
+
+        print('Logging run to "%s"' % logpath)
+        # if not os.path.isdir(logpath):
+        writer = SummaryWriter(log_dir=logpath)
+        cmd = ['tensorboard', '--logdir', logpath]
+        process = subprocess.Popen(cmd)
+        # Kill subprocess on script error
+        atexit.register(process.terminate)
+        pid = process.pid
+        # else:
+        # writer = SummaryWriter(log_dir=logpath, comment='ssd{}_{}'.format(ssd_dim, args.dataset))
+        writeHyperparams(writer, args, {'stepvalues': stepvalues})
+    writeParamsTxt(os.path.join(job_path, 'params.txt'), args,
+                   {'stepvalues': stepvalues})
+
+    ssd_net = build_ssd('train', 300, num_classes)
+    net = ssd_net
+
+    if args.cuda:
+        net = torch.nn.DataParallel(ssd_net)
+        cudnn.benchmark = True
+
+    if args.resume:
+        print('Resuming training, loading {}...'.format(args.resume))
+        assert os.path.isfile(args.resume), 'Invalid "%s"' % args.resume
+        ssd_net.load_weights(args.resume)
+    else:
+        assert os.path.isfile(args.basenet), 'Invalid "%s"' % args.basenet
+        vgg_weights = torch.load(args.basenet)
+        print('Loading base network...')
+        ssd_net.vgg.load_state_dict(vgg_weights)
+
+    if args.cuda:
+        net = net.cuda()
+
+    if args.visdom:
+        dummy_in = Variable(torch.rand(batch_size, 3, ssd_dim, ssd_dim))
+        writer.add_graph(net, (dummy_in, ))
+        # with SummaryWriter(comment='ssd300') as w:
+        #     w.add_graph(net, (dummy_in, ), verbose=True)
+        # with SummaryWriter(comment='ssd300onix') as w:
+        #     torch.onnx.export(net, dummy_in, "test.proto", verbose=True)
+        #     w.add_graph_onnx("test.proto")
+
+    if not args.resume:
+        print('Initializing weights...')
+        # initialize newly added layers' weights with xavier method
+        ssd_net.extras.apply(weights_init)
+        ssd_net.loc.apply(weights_init)
+        ssd_net.conf.apply(weights_init)
+
+    optimizer = optim.SGD(net.parameters(), lr=args.lr,
+                          momentum=args.momentum, weight_decay=args.weight_decay)
+    criterion = MultiBoxLoss(num_classes, 0.5, True, 0,
+                             True, 3, 0.5, False, args.cuda)
+
     train()

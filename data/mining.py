@@ -134,12 +134,13 @@ class MiningDataset(VOCDetection):
         # Beause I don't trust opencv to handle invalid file names.
         assert os.path.isfile(img_name), 'Invalid file "{}"'.format(img_name)
         img = cv2.imread(img_name, cv2.IMREAD_COLOR)
+
         if img is None:
             print('Image read was "Nonetype" - "{}"'.format(img_name))
-            img = cv2.imread(img_name, cv2.IMREAD_COLOR)
-            if img is None:
-                import pdb; pdb.set_trace()
-                print('image is still none!')
+            img = np.asarray(Image.open(img_name)).astype(np.uint8)
+            # img = cv2.imread(img_name, cv2.IMREAD_COLOR)
+            # if img is None:
+            #     print('image is still none!')
         height, width, channels = img.shape
 
         if self.target_transform is not None:
