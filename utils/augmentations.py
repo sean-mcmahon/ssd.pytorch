@@ -81,6 +81,22 @@ class SubtractMeans(object):
         return image.astype(np.float32), boxes, labels
 
 
+class NormaliseSubtractMeans(object):
+
+    def __init__(self, mean):
+        self.mean = np.array(mean, dtype=np.float32)
+
+    def __call__(self, image, boxes=None, labels=None):
+        image = image.astype(np.float32)
+        if np.any(image > 1):
+            image = np.clip(image, 0, 255)
+            image /= 255
+            image -= (self.mean / 255)
+        else:
+            image -= self.mean
+        return image.astype(np.float32), boxes, labels
+
+
 class ToAbsoluteCoords(object):
 
     def __call__(self, image, boxes=None, labels=None):
@@ -467,5 +483,5 @@ class SSDMiningAugmentation(SSDAugmentation):
             RandomMirror(),
             ToPercentCoords(),
             Resize(self.size),
-            SubtractMeans(self.mean)
+            NormaliseSubtractMeans(self.mean)
         ])

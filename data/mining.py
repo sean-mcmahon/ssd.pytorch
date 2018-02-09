@@ -138,6 +138,7 @@ class MiningDataset(VOCDetection):
         if img is None:
             print('Image read was "Nonetype" - "{}"'.format(img_name))
             img = np.asarray(Image.open(img_name)).astype(np.uint8)
+            img = img[:, :, (2, 1, 0)]  # convert to bgr
             # img = cv2.imread(img_name, cv2.IMREAD_COLOR)
             # if img is None:
             #     print('image is still none!')
