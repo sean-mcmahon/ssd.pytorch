@@ -92,9 +92,6 @@ def train():
         # load train data
         images, targets = next(batch_iterator)
 
-        if torch.max(images) > 1:
-            print('Data is not normalized, max is {}'.format(torch.max(images)))
-
         if args.cuda:
             images = Variable(images.cuda())
             targets = [Variable(anno.cuda(), volatile=True)
@@ -123,7 +120,6 @@ def train():
                     writer.add_histogram(
                         name.replace('.', '/'),
                         param.clone().cpu().data.numpy(), iteration)
-
             if args.visdom:
                 if args.send_images_to_visdom:
                     if batch_size > 10:
@@ -136,17 +132,28 @@ def train():
 
                     writer.add_image(
                         'aug_image', imgx, iteration)
+        if iteration % epoch_size == 0:
+            epoch_n = iteration / epoch_size
+            print('\n--> Epoch ' + repr(epoch_n) + ' ++ Loss: %.4f ++' % (
+                loss.data[0]) + ' ({} iterations)'.format(iteration), end=' ')
+            total_loss = loss_l.data[0] + loss_c.data[0]
+            losses_d = {'total_loss': total_loss, 'loc_loss': loss_l.data[0],
+                        'conf_loss': loss_c.data[0]}
+            writer.add_scalars('loss/l_per_epoch', losses_d, epoch_n)
+
         if args.visdom:
             total_loss = loss_l.data[0] + loss_c.data[0]
             losses_d = {'total_loss': total_loss, 'loc_loss': loss_l.data[0],
                         'conf_loss': loss_c.data[0]}
             writer.add_scalars('loss/l_per_iter', losses_d, iteration)
-        if iteration % 100 == 0:
-            print('Saving state, iter:', iteration)
+        if iteration % 1000 == 0 and iteration > 0:
+            print('\nSaving state, iter:', iteration, end=' ')
             sstr = os.path.join(
                 save_weights, 'ssd{}_0712_{}_{}.pth'.format(
                     str(ssd_dim), repr(iteration), args.dataset))
             torch.save(ssd_net.state_dict(), sstr)
+            # eval_network(net.eval(), eval_iter, writer)
+            # net.train()
     torch.save(ssd_net.state_dict(), save_weights +
                'ssd' + str(ssd_dim) + args.version + '.pth')
 
@@ -175,7 +182,7 @@ if __name__ == '__main__':
                         help='Batch size for training')
     parser.add_argument('--resume', default=None, type=str,
                         help='Resume from checkpoint')
-    parser.add_argument('--num_workers', default=2, type=int,
+    parser.add_argument('--num_workers', default=4, type=int,
                         help='Number of workers used in dataloading')
     parser.add_argument('--iterations', default=120000, type=int,
                         help='Number of training iterations')
@@ -192,7 +199,7 @@ if __name__ == '__main__':
                         help='Gamma update for SGD')
     parser.add_argument('--visdom', default=True, type=str2bool,
                         help='Use visdom to for loss visualization')
-    parser.add_argument('--send_images_to_visdom', type=str2bool, default=True,
+    parser.add_argument('--send_images_to_visdom', type=str2bool, default=False,
                         help='Sample a random image from each 10th batch, send it to visdom after augmentations step')
     parser.add_argument('--save_folder', default='/home/sean/Documents/ssd/',
                         help='Location to save checkpoint models')
