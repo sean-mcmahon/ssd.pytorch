@@ -80,10 +80,10 @@ def train():
         if iteration in stepvalues:
             step_index += 1
             adjust_learning_rate(optimizer, args.gamma, step_index)
-            if args.visdom:
-                l_d = {'total_loss': loc_loss + conf_loss, 'loc_loss': loc_loss,
-                       'conf_loss': conf_loss}
-                writer.add_scalars('loss/l_per_stepval', l_d, epoch)
+            new_lr = optimizer.param_groups[0]['lr']
+            l_d = {'total_loss': loc_loss + conf_loss, 'loc_loss': loc_loss,
+                   'conf_loss': conf_loss, 'learning_rate': new_lr}
+            writer.add_scalars('loss/l_per_stepval', l_d, epoch)
             # reset epoch loss counters
             loc_loss = 0
             conf_loss = 0
@@ -115,23 +115,6 @@ def train():
             print('Timer: %.4f sec.' % (t1 - t0))
             print('iter ' + repr(iteration) + ' || Loss: %.4f ||' % (
                 loss.data[0]), end=' ')
-            if args.visdom:
-                for name, param in net.named_parameters():
-                    writer.add_histogram(
-                        name.replace('.', '/'),
-                        param.clone().cpu().data.numpy(), iteration)
-            if args.visdom:
-                if args.send_images_to_visdom:
-                    if batch_size > 10:
-                        imgx = vutils.make_grid(images.data.cpu()[:10, :, :],
-                                                normalize=True, scale_each=True)
-                    else:
-                        imgx = vutils.make_grid(images.data.cpu(),
-                                                normalize=True, scale_each=True)
-                    random_batch_index = np.random.randint(images.size(0))
-
-                    writer.add_image(
-                        'aug_image', imgx, iteration)
         if iteration % epoch_size == 0:
             epoch_n = iteration / epoch_size
             print('\n--> Epoch ' + repr(epoch_n) + ' ++ Loss: %.4f ++' % (
@@ -141,12 +124,24 @@ def train():
                         'conf_loss': loss_c.data[0]}
             writer.add_scalars('loss/l_per_epoch', losses_d, epoch_n)
 
-        if args.visdom:
-            total_loss = loss_l.data[0] + loss_c.data[0]
-            losses_d = {'total_loss': total_loss, 'loc_loss': loss_l.data[0],
-                        'conf_loss': loss_c.data[0]}
-            writer.add_scalars('loss/l_per_iter', losses_d, iteration)
+        total_loss = loss_l.data[0] + loss_c.data[0]
+        losses_d = {'total_loss': total_loss, 'loc_loss': loss_l.data[0],
+                    'conf_loss': loss_c.data[0]}
+        writer.add_scalars('loss/l_per_iter', losses_d, iteration)
         if iteration % 1000 == 0 and iteration > 0:
+            for name, param in net.named_parameters():
+                writer.add_histogram(
+                    name.replace('.', '/'),
+                    param.clone().cpu().data.numpy(), iteration)
+            if args.send_images_to_tb:
+                if batch_size > 10:
+                    imgx = vutils.make_grid(images.data.cpu()[:10, :, :],
+                                            normalize=True, scale_each=True)
+                else:
+                    imgx = vutils.make_grid(images.data.cpu(),
+                                            normalize=True, scale_each=True)
+                writer.add_image(
+                    'aug_image', imgx, iteration)
             print('\nSaving state, iter:', iteration, end=' ')
             sstr = os.path.join(
                 save_weights, 'ssd{}_0712_{}_{}.pth'.format(
@@ -197,10 +192,11 @@ if __name__ == '__main__':
                         type=float, help='Weight decay for SGD')
     parser.add_argument('--gamma', default=0.1, type=float,
                         help='Gamma update for SGD')
-    parser.add_argument('--visdom', default=True, type=str2bool,
-                        help='Use visdom to for loss visualization')
-    parser.add_argument('--send_images_to_visdom', type=str2bool, default=False,
-                        help='Sample a random image from each 10th batch, send it to visdom after augmentations step')
+    parser.add_argument('--tb', '--tensorboard', default=False, type=str2bool,
+                        help='Startup Tensorboard thread for visualisation')
+    parser.add_argument('--send_images_to_tb', type=str2bool, default=False,
+                        help='Sample a random image from each 10th batch,' +
+                        ' send it to tensorboard after augmentations step')
     parser.add_argument('--save_folder', default='/home/sean/Documents/ssd/',
                         help='Location to save checkpoint models')
     parser.add_argument('--data_root', default=VOCroot,
@@ -231,7 +227,8 @@ if __name__ == '__main__':
     rgb_means = {'voc': (104, 117, 123), 'mining': (65, 69, 76)}
     data_iters = {'voc': VOCDetection, 'mining': MiningDataset}
     augmentators = {'voc': SSDAugmentation(ssd_dim, rgb_means['voc']),
-                    'mining': SSDMiningAugmentation(ssd_dim, rgb_means['mining'])}
+                    'mining': SSDMiningAugmentation(ssd_dim,
+                                                    rgb_means['mining'])}
     target_transforms = {'voc': AnnotationTransform,
                          'mining': MiningAnnotationTransform}
 
@@ -258,22 +255,21 @@ if __name__ == '__main__':
     if not os.path.isdir(save_weights):
         os.makedirs(save_weights)
 
-    if args.visdom:
-        logpath = os.path.join(job_path, 'runs')
-        if not os.path.isdir(logpath):
-            os.makedirs(logpath)
+    logpath = os.path.join(job_path, 'runs')
+    if not os.path.isdir(logpath):
+        os.makedirs(logpath)
 
-        print('Logging run to "%s"' % logpath)
-        # if not os.path.isdir(logpath):
-        writer = SummaryWriter(log_dir=logpath)
+    print('Logging run to "%s"' % logpath)
+    # if not os.path.isdir(logpath):
+    writer = SummaryWriter(log_dir=logpath)
+    if args.tb:
         cmd = ['tensorboard', '--logdir', logpath]
         process = subprocess.Popen(cmd)
         # Kill subprocess on script error
         atexit.register(process.terminate)
         pid = process.pid
         # else:
-        # writer = SummaryWriter(log_dir=logpath, comment='ssd{}_{}'.format(ssd_dim, args.dataset))
-        writeHyperparams(writer, args, {'stepvalues': stepvalues})
+    writeHyperparams(writer, args, {'stepvalues': stepvalues})
     writeParamsTxt(os.path.join(job_path, 'params.txt'), args,
                    {'stepvalues': stepvalues})
 
@@ -297,14 +293,13 @@ if __name__ == '__main__':
     if args.cuda:
         net = net.cuda()
 
-    if args.visdom:
-        dummy_in = Variable(torch.rand(batch_size, 3, ssd_dim, ssd_dim))
-        writer.add_graph(net, (dummy_in, ))
-        # with SummaryWriter(comment='ssd300') as w:
-        #     w.add_graph(net, (dummy_in, ), verbose=True)
-        # with SummaryWriter(comment='ssd300onix') as w:
-        #     torch.onnx.export(net, dummy_in, "test.proto", verbose=True)
-        #     w.add_graph_onnx("test.proto")
+    # dummy_in = Variable(torch.rand(batch_size, 3, ssd_dim, ssd_dim))
+    # writer.add_graph(net, (dummy_in, ))
+    # with SummaryWriter(comment='ssd300') as w:
+    #     w.add_graph(net, (dummy_in, ), verbose=True)
+    # with SummaryWriter(comment='ssd300onix') as w:
+    #     torch.onnx.export(net, dummy_in, "test.proto", verbose=True)
+    #     w.add_graph_onnx("test.proto")
 
     if not args.resume:
         print('Initializing weights...')
