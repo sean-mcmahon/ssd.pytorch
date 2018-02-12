@@ -124,6 +124,14 @@ test_data_aug.py
 data/datasets/
 data/ssd_dataloader.py
 
+# Images / PDF
+*.jpg
+*.jpeg
+*.png
+*.PDF
+
+train_local.sh
+
 # Other Files
 *.json
 myeval*/

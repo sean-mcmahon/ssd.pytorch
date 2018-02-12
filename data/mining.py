@@ -79,7 +79,10 @@ class MiningDataset(VOCDetection):
         self.name = dataset_name
         json_set = json_set if json_set.endswith(
             '.json') else json_set + '.json'
-        json_data = json.load(open(os.path.join(root, json_set)))
+        json_filename = os.path.join(root, json_set)
+        if not os.path.isfile(json_filename):
+            raise IOError('Invalid json file "%s"' % json_filename)
+        json_data = json.load(open(json_filename))
         self.im_names = []
         self.targets = []
         self.classes = MINING_CLASSES

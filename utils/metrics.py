@@ -110,7 +110,8 @@ def calcMetrics(dets, gt, classname, dataset, thresh=0.5, use_07_metric=False):
             num_pos += len(cls_r) - sum(difficult)
             if np.all(gt[imname][:, :4] <= 1.0):
                 height, width, channels = dataset.pull_image(idx).shape
-                import pdb; pdb.set_trace()
+                import pdb
+                pdb.set_trace()
                 print('Multiplying gts by image dimes, should this be happening?')
                 gt[imname][:, 0] *= width
                 gt[imname][:, 2] *= width
@@ -296,7 +297,8 @@ def compare_gts(mygt, path_to_eval_gt, classname):
                 pass
         else:
             key_misses.append(key)
-    print("{} misses, and {} matches".format(len(key_misses), len(key_matches)))
+    print("{} misses, and {} matches".format(
+        len(key_misses), len(key_matches)))
     assert len(mygt) == len(class_recs)
     assert len(mygt) == len(imagenames)
     if len(key_matches) == len(imagenames):
@@ -306,7 +308,6 @@ def compare_gts(mygt, path_to_eval_gt, classname):
         import pdb
         pdb.set_trace()
         return False
-
 
 
 def getDetandGT(dataset, net, use_cuda=True):
@@ -327,7 +328,8 @@ def getDetandGT(dataset, net, use_cuda=True):
         if use_cuda:
             x = x.cuda()
         _t['im_detect'].tic()
-        detections = net(x).data
+        y = net(x)
+        detections = y.data
         detect_time = _t['im_detect'].toc(average=False)
 
         # skip j = 0, because it's the background class
@@ -400,6 +402,7 @@ def main(args):
         cudnn.benchmark = True
     eval_ssd(data_iter, net, args.save_path, cuda=args.cuda,
              use_voc_07=use_voc_07_ap_metric)
+
 
 if __name__ == '__main__':
     args = get_args()

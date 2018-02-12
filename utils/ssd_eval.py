@@ -15,11 +15,10 @@ import pickle
 import json
 script_dir = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.dirname(script_dir))
-# from .eval import Timer, voc_ap, parse_rec
 from eval import voc_ap
 from metrics import getDetandGT
 from ssd import build_ssd
-from data import MiningDataset, MINING_CLASSES, MiningAnnotationTransform
+from data import train_sets, test_sets, rgb_means, data_iters, augmentators, target_transforms
 from data import AnnotationTransform, VOCDetection, BaseTransform, VOC_CLASSES
 if sys.version_info[0] == 2:
     import xml.etree.cElementTree as ET
@@ -37,7 +36,7 @@ def get_args():
     parser.add_argument('--trained_model',
                         default='/home/sean/src/ssd_pytorch/weights/ssd300_mAP_77.43_v2.pth',
                         type=str, help='Trained state_dict file path to open')
-    parser.add_argument('--save_path', default='myeval2/', type=str,
+    parser.add_argument('--save_folder', default='myeval/', type=str,
                         help='Dir to save results')
     parser.add_argument('--top_k', default=5, type=int,
                         help='Further restrict the number of predictions to parse')
@@ -45,6 +44,7 @@ def get_args():
                         help='Use cuda to train model')
     parser.add_argument('--data_root', default='/home/sean/data/VOCdevkit',
                         help='Location of VOC root directory')
+    parser.add_argument('--dataset', default='voc')
     args = parser.parse_args()
     return args
 
@@ -433,8 +433,9 @@ def eval_ssd(data_iter, network, save_path, cuda=True, use_voc_07=False):
         with open(fname, 'w') as f:
             f.write('Class: {}\nrec: {}\nprec: {}\nap: {}'.format(
                 cls, rec, prec, ap))
+    mean_ap = np.mean(aps)
     print('~~~~~~~~')
-    print('Mean AP = {:.4f}'.format(np.mean(aps)))
+    print('Mean AP = {:.4f}'.format(mean_ap))
     print(' ')
     print('--------------------------------------------------------------')
     print('Results computed with my NEW **unofficial** Python eval code.')
@@ -444,6 +445,7 @@ def eval_ssd(data_iter, network, save_path, cuda=True, use_voc_07=False):
     with open(fname, 'w') as f:
         f.write('Mean AP = {:.4f}'.format(np.mean(aps)))
     print('Metrics saves to "{}"'.format(save_path))
+    return mean_ap
 
 
 def calcMetrics(dets_file_dir, gt_labels, classname, dataset,
@@ -464,9 +466,9 @@ def calcMetrics(dets_file_dir, gt_labels, classname, dataset,
         voc_tp = tp_dict['tps']
         voc_fp = tp_dict['fps']
 
-    voc_root = '/home/sean/data/VOCdevkit'
-    annopath = os.path.join(voc_root, 'VOC2007', 'Annotations', '%s.xml')
-    recs = get_voc_label_recs(args.save_path, annopath, imagenames)
+    # voc_root = '/home/sean/data/VOCdevkit'
+    # annopath = os.path.join(voc_root, 'VOC2007', 'Annotations', '%s.xml')
+    # recs = get_voc_label_recs(args.save_folder, annopath, imagenames)
 
     im_is = [os.path.splitext(os.path.basename(name))[0]
              for name in imagenames]
@@ -549,8 +551,13 @@ def main(args):
     set_type = 'test'
     use_voc_07_ap_metric = False
 
-    data_iter = VOCDetection(args.data_root, [('2007', set_type)], BaseTransform(
-        img_dim, (104, 117, 123)), AnnotationTransform())
+    # data_iter = VOCDetection(args.data_root, [('2007', set_type)], BaseTransform(
+    #     img_dim, (104, 117, 123)), AnnotationTransform())
+
+    data_iter = data_iters[args.dataset](
+        args.data_root, test_sets[args.dataset],
+        augmentators[args.dataset](img_dim, rgb_means[args.dataset]),
+        target_transforms[args.dataset]())
     print('Using data iterator "{}"'.format(data_iter.__class__.__name__))
     num_classes = data_iter.num_classes()
 
@@ -559,11 +566,15 @@ def main(args):
     net.eval()
     print('Finished loading model! {} Cuda'.format(
         'Using' if args.cuda else 'No'))
+    if args.dataset not in args.save_folder:
+        args.save_folder = '%s_%s/' % (args.save_folder.replace('/', ''),
+                                      args.dataset)
 
     if args.cuda:
-        net = net.cuda()
+        net.cuda()
         cudnn.benchmark = True
-    eval_ssd(data_iter, net, args.save_path, cuda=args.cuda,
+
+    eval_ssd(data_iter, net, args.save_folder, cuda=args.cuda,
              use_voc_07=use_voc_07_ap_metric)
 
 
