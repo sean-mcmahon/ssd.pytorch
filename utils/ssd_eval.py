@@ -15,11 +15,11 @@ import pickle
 import json
 script_dir = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.dirname(script_dir))
+sys.path.append(script_dir)
 from eval import voc_ap
 from metrics import getDetandGT
 from ssd import build_ssd
 from data import train_sets, test_sets, rgb_means, data_iters, augmentators, target_transforms
-from data import AnnotationTransform, VOCDetection, BaseTransform, VOC_CLASSES
 if sys.version_info[0] == 2:
     import xml.etree.cElementTree as ET
 else:
@@ -206,7 +206,7 @@ def write_class_dets(bboxes, dataset, out_dir):
         if os.path.isfile(fname):
             print('Reading detections for class {}'.format(classname))
             continue
-        print('Writing detections for class {}'.format(classname))
+        # print('Writing detections for class {}'.format(classname))
         with open(fname, 'wt') as f:
             for im_id, name in enumerate(imnames):
                 dets = bboxes[cls_id + 1][im_id]
@@ -379,9 +379,12 @@ def get_voc_class_dict(classname, imagenames, recs, rm_diff=False):
     return class_recs, npos
 
 
-def eval_ssd(data_iter, network, save_path, cuda=True, use_voc_07=False):
-    print('VOC07 AP metric? ' + (
-        'Yes' if use_voc_07 else 'No, using VOC 2010-2012'))
+def eval_ssd(data_iter, network, save_path, ovthresh=0.5, cuda=True,
+             use_voc_07=False, verbose=False):
+    print('Evaluating SSD thresh={}...'.format(ovthresh))
+    if verbose:
+        print('VOC07 AP metric? ' + (
+            'Yes' if use_voc_07 else 'No, using VOC 2010-2012'))
     if not os.path.isdir(save_path):
         os.mkdir(save_path)
 
@@ -389,10 +392,12 @@ def eval_ssd(data_iter, network, save_path, cuda=True, use_voc_07=False):
     gt_filename = os.path.join(save_path, 'ground_truth_labels.pkl')
     if not os.path.isfile(det_filename) or not os.path.isfile(gt_filename):
         # might as well generate/load and save both.
-        print('Generating network predictions and reading annotation GT...')
+        if verbose:
+            print('Generating network predictions and reading annotation GT...')
         all_bboxes, all_targets = getDetandGT(
             data_iter, network, use_cuda=cuda)
-        print('Saving to path "{}"'.format(save_path))
+        if verbose:
+            print('Saving to path "{}"'.format(save_path))
         with open(det_filename, 'wb') as f:
             pickle.dump(all_bboxes, f, pickle.HIGHEST_PROTOCOL)
         with open(gt_filename, 'wb') as g:
@@ -404,11 +409,11 @@ def eval_ssd(data_iter, network, save_path, cuda=True, use_voc_07=False):
             all_bboxes = pickle.load(f)
         with open(gt_filename, 'rb') as g:
             all_targets = pickle.load(g)
-
-    print('Reformatting Detections and Labels...')
+    if verbose:
+        print('Reformatting Detections and Labels...')
     det_dir = write_class_dets(all_bboxes, data_iter, save_path)
     # label_dir = write_class_labels(all_targets, data_iter, save_path)
-    if 'voc' in data_iter.__class__.__name__.lower():
+    if 'voc' in data_iter.__class__.__name__.lower() and verbose:
         # check detections and labels against those created from eval.py
         # det_pass = check_dets(all_bboxes, det_dir, data_iter, save_path)
         # anno_pass = check_annots(all_targets, data_iter, save_path)
@@ -419,13 +424,13 @@ def eval_ssd(data_iter, network, save_path, cuda=True, use_voc_07=False):
         #     + '*' * 20
         # print((pass_s if det_pass and anno_pass else fail_s))
         pass
-
-    print('Calulating Metrics...')
+    if verbose:
+        print('Calulating Metrics...')
 
     aps = []
     for i, cls in enumerate(data_iter.classes):
         prec, rec, ap = calcMetrics(
-            det_dir, all_targets, cls, data_iter, ovthresh=0.5,
+            det_dir, all_targets, cls, data_iter, ovthresh=ovthresh,
             use_07_metric=use_voc_07)
         aps += [ap]
         print('AP for {} = {:.4f}'.format(cls, ap))
@@ -434,17 +439,21 @@ def eval_ssd(data_iter, network, save_path, cuda=True, use_voc_07=False):
             f.write('Class: {}\nrec: {}\nprec: {}\nap: {}'.format(
                 cls, rec, prec, ap))
     mean_ap = np.mean(aps)
-    print('~~~~~~~~')
-    print('Mean AP = {:.4f}'.format(mean_ap))
-    print(' ')
-    print('--------------------------------------------------------------')
-    print('Results computed with my NEW **unofficial** Python eval code.')
-    print('Results should be very close to the official MATLAB eval code.')
-    print('--------------------------------------------------------------')
+    if verbose:
+        print('~~~~~~~~')
+        print('Mean AP = {:.4f}'.format(mean_ap))
+        print(' ')
+        print('--------------------------------------------------------------')
+        print('Results computed with my NEW **unofficial** Python eval code.')
+        print('Results should be very close to the official MATLAB eval code.')
+        print('--------------------------------------------------------------')
+    else:
+        print('Mean AP = {:.4f}'.format(mean_ap))
     fname = os.path.join(save_path, 'mean_ap.txt')
     with open(fname, 'w') as f:
         f.write('Mean AP = {:.4f}'.format(np.mean(aps)))
-    print('Metrics saves to "{}"'.format(save_path))
+    if verbose:
+        print('Metrics saves to "{}"'.format(save_path))
     return mean_ap
 
 
@@ -550,6 +559,7 @@ def main(args):
     img_dim = 300
     set_type = 'test'
     use_voc_07_ap_metric = False
+    overlap_thresh = 0.5
 
     # data_iter = VOCDetection(args.data_root, [('2007', set_type)], BaseTransform(
     #     img_dim, (104, 117, 123)), AnnotationTransform())
@@ -568,14 +578,14 @@ def main(args):
         'Using' if args.cuda else 'No'))
     if args.dataset not in args.save_folder:
         args.save_folder = '%s_%s/' % (args.save_folder.replace('/', ''),
-                                      args.dataset)
+                                       args.dataset)
 
     if args.cuda:
         net.cuda()
         cudnn.benchmark = True
 
-    eval_ssd(data_iter, net, args.save_folder, cuda=args.cuda,
-             use_voc_07=use_voc_07_ap_metric)
+    eval_ssd(data_iter, net, args.save_folder, ovthresh=overlap_thresh,
+             cuda=args.cuda, use_voc_07=use_voc_07_ap_metric, verbose=True)
 
 
 if __name__ == '__main__':

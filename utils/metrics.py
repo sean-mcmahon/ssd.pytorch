@@ -320,6 +320,7 @@ def getDetandGT(dataset, net, use_cuda=True):
     all_boxes = [[[] for _ in range(num_images)]
                  for _ in range(dataset.num_classes())]
     all_targets = {}
+    print_it = num_images // 4
     for i in range(num_images):
         im, gt, h, w = dataset.pull_item(i)
         imname = dataset.pull_image_name(i)
@@ -328,6 +329,7 @@ def getDetandGT(dataset, net, use_cuda=True):
         if use_cuda:
             x = x.cuda()
         _t['im_detect'].tic()
+        # print(type(net), '\n', net)
         y = net(x)
         detections = y.data
         detect_time = _t['im_detect'].toc(average=False)
@@ -353,9 +355,9 @@ def getDetandGT(dataset, net, use_cuda=True):
         gt[:, 1] *= h
         gt[:, 3] *= h
         all_targets[imname] = gt
-
-        print('im_detect: {:d}/{:d} {:.3f}s'.format(i + 1,
-                                                    num_images, detect_time))
+        if i % print_it == 0:
+            print('Eval det: {:d}/{:d} {:.3f}s'.format(i + 1,
+                                                        num_images, detect_time))
     return all_boxes, all_targets
 
 

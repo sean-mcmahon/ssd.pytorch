@@ -1,3 +1,4 @@
+import numpy as np
 import os
 import torch
 import torch.nn as nn
@@ -8,18 +9,21 @@ import torchvision.utils as vutils
 import argparse
 from torch.autograd import Variable
 import torch.utils.data as data
-from data import v2, v1, AnnotationTransform, VOCDetection, detection_collate, VOCroot, VOC_CLASSES
-from data.mining import MiningDataset, MiningAnnotationTransform
-from utils.augmentations import SSDAugmentation, SSDMiningAugmentation
+from data import v2, v1
+from data import detection_collate, VOCroot
+from data import train_sets, test_sets, rgb_means, data_iters
+from data import augmentators, target_transforms
+import utils.ssd_eval
+# from data.mining import MiningDataset, MiningAnnotationTransform
+# from utils.augmentations import SSDAugmentation, SSDMiningAugmentation
 from layers.modules import MultiBoxLoss
 from ssd import build_ssd
-import numpy as np
 import time
 import subprocess
 from tensorboardX import SummaryWriter
-import socket
 from datetime import datetime
 import atexit
+import shutil
 
 
 def str2bool(v):
@@ -64,19 +68,23 @@ def train():
     conf_loss = 0
     epoch = 0
 
-    print('Using "{}" Data Iterator'.format(dataset.__class__.__name__))
+    print('Using "{}" Data Iterator'.format(train_dataset.__class__.__name__))
 
-    epoch_size = len(dataset) // args.batch_size
-    print('Training SSD on', dataset.name)
+    epoch_size = len(train_dataset) // args.batch_size
+    print('Training SSD on', train_dataset.name)
     step_index = 0
     batch_iterator = None
-    data_loader = data.DataLoader(
-        dataset, batch_size, num_workers=args.num_workers,
-        shuffle=True, collate_fn=detection_collate, pin_memory=True)
+    train_loader = data.DataLoader(
+        train_dataset, batch_size, num_workers=args.num_workers,
+        shuffle=True, collate_fn=detection_collate, pin_memory=False)
+    # eval_loader = data.DataLoader(
+    #     eval_dataset, batch_size, num_workers=args.num_workers, shuffle=False,
+    #     pin_memory=False)
+
     for iteration in range(args.start_iter, max_iter):
         if (not batch_iterator) or (iteration % epoch_size == 0):
             # create batch iterator
-            batch_iterator = iter(data_loader)
+            batch_iterator = iter(train_loader)
         if iteration in stepvalues:
             step_index += 1
             adjust_learning_rate(optimizer, args.gamma, step_index)
@@ -111,6 +119,11 @@ def train():
         t1 = time.time()
         loc_loss += loss_l.data[0]
         conf_loss += loss_c.data[0]
+
+        total_loss = loss_l.data[0] + loss_c.data[0]
+        losses_d = {'total_loss': total_loss, 'loc_loss': loss_l.data[0],
+                    'conf_loss': loss_c.data[0]}
+        writer.add_scalars('loss/l_per_iter', losses_d, iteration)
         if iteration % 10 == 0:
             print('Timer: %.4f sec.' % (t1 - t0))
             print('iter ' + repr(iteration) + ' || Loss: %.4f ||' % (
@@ -118,21 +131,33 @@ def train():
         if iteration % epoch_size == 0:
             epoch_n = iteration / epoch_size
             print('\n--> Epoch ' + repr(epoch_n) + ' ++ Loss: %.4f ++' % (
-                loss.data[0]) + ' ({} iterations)'.format(iteration), end=' ')
+                loss.data[0]) + ' ({} iterations)'.format(iteration))
             total_loss = loss_l.data[0] + loss_c.data[0]
             losses_d = {'total_loss': total_loss, 'loc_loss': loss_l.data[0],
                         'conf_loss': loss_c.data[0]}
             writer.add_scalars('loss/l_per_epoch', losses_d, epoch_n)
-
-        total_loss = loss_l.data[0] + loss_c.data[0]
-        losses_d = {'total_loss': total_loss, 'loc_loss': loss_l.data[0],
-                    'conf_loss': loss_c.data[0]}
-        writer.add_scalars('loss/l_per_iter', losses_d, iteration)
-        if iteration % 1000 == 0 and iteration > 0:
             for name, param in net.named_parameters():
                 writer.add_histogram(
                     name.replace('.', '/'),
                     param.clone().cpu().data.numpy(), iteration)
+            sstr = os.path.join(
+                save_weights, 'ssd{}_epoch{}_iter{}_{}.pth'.format(
+                    ssd_dim, epoch_n, iteration, args.dataset))
+            torch.save(ssd_net.state_dict(), sstr)
+            eval_path = os.path.join(job_path, 'evalfiles')
+            if os.path.isdir(eval_path):
+                # current eval code will just re-use contents of eval_path
+                shutil.rmtree(eval_path)
+            print('Setting network to eval mode...')
+            net.eval()
+            ssd_net.phase = 'test'
+            # utils.ssd_eval.eval_ssd(eval_dataset, net,
+            #                         eval_path, cuda=args.cuda, ovthresh=0.3)
+            ssd_net.phase = 'train'
+            net.train()
+            print('setting network back to train mode')
+
+        if iteration % 1000 == 0 and iteration > 0:
             if args.send_images_to_tb:
                 if batch_size > 10:
                     imgx = vutils.make_grid(images.data.cpu()[:10, :, :],
@@ -144,13 +169,14 @@ def train():
                     'aug_image', imgx, iteration)
             print('\nSaving state, iter:', iteration, end=' ')
             sstr = os.path.join(
-                save_weights, 'ssd{}_0712_{}_{}.pth'.format(
+                save_weights, 'ssd{}_{}_{}.pth'.format(
                     str(ssd_dim), repr(iteration), args.dataset))
             torch.save(ssd_net.state_dict(), sstr)
             # eval_network(net.eval(), eval_iter, writer)
             # net.train()
-    torch.save(ssd_net.state_dict(), save_weights +
-               'ssd' + str(ssd_dim) + args.version + '.pth')
+    torch.save(ssd_net.state_dict(), os.path.join(save_weights,
+                                                  'ssd{}_final_{}.pth'.format(
+                                                      str(ssd_dim), args.dataset)))
 
 
 def adjust_learning_rate(optimizer, gamma, step):
@@ -245,23 +271,29 @@ if __name__ == '__main__':
     else:
         stepvalues = (80000, 100000, 120000)
 
-    train_sets = {'voc': [('2007', 'trainval'), ('2012', 'trainval')],
-                  'mining': 'split2/train_gopro2_scraped.json'}
-    rgb_means = {'voc': (104, 117, 123), 'mining': (65, 69, 76)}
-    data_iters = {'voc': VOCDetection, 'mining': MiningDataset}
-    augmentators = {'voc': SSDAugmentation(ssd_dim, rgb_means['voc']),
-                    'mining': SSDMiningAugmentation(ssd_dim,
-                                                    rgb_means['mining'])}
-    target_transforms = {'voc': AnnotationTransform,
-                         'mining': MiningAnnotationTransform}
+    # train_sets = {'voc': [('2007', 'trainval'), ('2012', 'trainval')],
+    #               'mining': 'split2/train_gopro2_scraped.json'}
+    # rgb_means = {'voc': (104, 117, 123), 'mining': (65, 69, 76)}
+    # data_iters = {'voc': VOCDetection, 'mining': MiningDataset}
+    # augmentators = {'voc': SSDAugmentation(ssd_dim, rgb_means['voc']),
+    #                 'mining': SSDMiningAugmentation(ssd_dim,
+    #                                                 rgb_means['mining'])}
+    # target_transforms = {'voc': AnnotationTransform,
+    #                      'mining': MiningAnnotationTransform}
 
     print('Loading Dataset...')
     assert os.path.exists(args.data_root), 'root invalid "%s"' % args.data_root
-    dataset = data_iters[args.dataset](
-        args.data_root, train_sets[args.dataset], augmentators[args.dataset],
+    train_dataset = data_iters[args.dataset](
+        args.data_root, train_sets[args.dataset],
+        augmentators[args.dataset](args.ssd_dim, rgb_means[args.dataset]),
         target_transforms[args.dataset]())
 
-    num_classes = dataset.num_classes()
+    eval_dataset = data_iters[args.dataset](
+        args.data_root, test_sets[args.dataset],
+        augmentators[args.dataset](args.ssd_dim, rgb_means[args.dataset]),
+        target_transforms[args.dataset]())
+
+    num_classes = train_dataset.num_classes()
 
     if os.path.isdir('/home/sean'):
         h_dir = '/home/sean'
@@ -320,10 +352,12 @@ if __name__ == '__main__':
             key, val
         ) in vgg_weights.items() if 'conf.' not in key and 'loc.' not in key and 'extras.' not in key and 'L2Norm.' not in key}
         ssd_net.vgg.load_state_dict(vgg_weights)
-        import pdb; pdb.set_trace()
 
     if args.cuda:
+        print('Training network on GPU with CUDA')
         net = net.cuda()
+    else:
+        print('Training on CPU')
 
     # dummy_in = Variable(torch.rand(batch_size, 3, ssd_dim, ssd_dim))
     # writer.add_graph(net, (dummy_in, ))
