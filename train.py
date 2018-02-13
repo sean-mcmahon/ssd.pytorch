@@ -64,7 +64,7 @@ def train():
     conf_loss = 0
     epoch = 0
 
-    print('Using "{}" Data'.format(dataset.__class__.__name__))
+    print('Using "{}" Data Iterator'.format(dataset.__class__.__name__))
 
     epoch_size = len(dataset) // args.batch_size
     print('Training SSD on', dataset.name)
@@ -163,6 +163,29 @@ def adjust_learning_rate(optimizer, gamma, step):
         param_group['lr'] = lr
 
 
+def data_split_str(split):
+    if isinstance(split, list):
+        if ('2007', 'trainval') in split and ('2012', 'trainval') in split:
+            return '0712trainval'
+        elif ('2007', 'test') in split and len(split) == 1:
+            return '07test'
+        else:
+            raise ValueError('Unexpected format "{}"'.format(split))
+    elif isinstance(split, str):
+        return os.path.splitext(split.replace('/', ''))[0]
+    else:
+        raise ValueError(
+            'split must be list or string, given {}\nsplit=({})'.format(
+                type(split), split))
+
+
+def extract_dict_keys(mdict, extract_key, clean_key=True):
+    if clean_key:
+        return {key.replace(extract_key, ''): val for (key, val) in mdict.items() if extract_key in key}
+    else:
+        return {key: val for (key, val) in mdict.items() if extract_key in key}
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='Single Shot MultiBox Detector Training')
@@ -223,7 +246,7 @@ if __name__ == '__main__':
         stepvalues = (80000, 100000, 120000)
 
     train_sets = {'voc': [('2007', 'trainval'), ('2012', 'trainval')],
-                  'mining': 'train_gopro1_scraped_all_labelled.json'}
+                  'mining': 'split2/train_gopro2_scraped.json'}
     rgb_means = {'voc': (104, 117, 123), 'mining': (65, 69, 76)}
     data_iters = {'voc': VOCDetection, 'mining': MiningDataset}
     augmentators = {'voc': SSDAugmentation(ssd_dim, rgb_means['voc']),
@@ -248,8 +271,9 @@ if __name__ == '__main__':
     if not os.path.exists(args.save_folder):
         os.mkdir(args.save_folder)
     current_time = datetime.now().strftime('%b%d_%H-%M-%S')
-    jobname = "ssd{}_{}_{}_{}".format(
-        ssd_dim, args.dataset, current_time, socket.gethostname())
+    data_split = data_split_str(train_sets[args.dataset])
+    jobname = "ssd{}__{}-{}__{}".format(
+        ssd_dim, args.dataset, data_split, current_time)
     job_path = os.path.join(args.save_folder, jobname)
     save_weights = os.path.join(job_path, 'weights')
     if not os.path.isdir(save_weights):
@@ -286,9 +310,17 @@ if __name__ == '__main__':
         ssd_net.load_weights(args.resume)
     else:
         assert os.path.isfile(args.basenet), 'Invalid "%s"' % args.basenet
-        vgg_weights = torch.load(args.basenet)
         print('Loading base network...')
+        vgg_weights = torch.load(args.basenet,
+                                 map_location=lambda storage, loc: storage)
+        conf_weights = extract_dict_keys(vgg_weights, 'conf.')
+        extras_weights = extract_dict_keys(vgg_weights, 'extras.')
+        loc_weights = extract_dict_keys(vgg_weights, 'loc.')
+        vgg_weights = {key.replace('vgg.', ''): val for (
+            key, val
+        ) in vgg_weights.items() if 'conf.' not in key and 'loc.' not in key and 'extras.' not in key and 'L2Norm.' not in key}
         ssd_net.vgg.load_state_dict(vgg_weights)
+        import pdb; pdb.set_trace()
 
     if args.cuda:
         net = net.cuda()
@@ -302,15 +334,44 @@ if __name__ == '__main__':
     #     w.add_graph_onnx("test.proto")
 
     if not args.resume:
-        print('Initializing weights...')
+        print('Initializing extra, loc and conf weights...')
+        # if conf weights and/or loc weights exist load, otherwise random init
         # initialize newly added layers' weights with xavier method
         ssd_net.extras.apply(weights_init)
+        if extras_weights:
+            ssd_net.extras.load_state_dict(extras_weights)
         ssd_net.loc.apply(weights_init)
+        if loc_weights:
+            ssd_net.loc.load_state_dict(loc_weights)
         ssd_net.conf.apply(weights_init)
+        if conf_weights:
+            ssd_conf_dict = ssd_net.conf.state_dict()
+            if len(conf_weights['0.bias']) != len(ssd_conf_dict['0.bias']):
+                # Needs coercion
+                bias_keys = [key for key in ssd_conf_dict.keys()
+                             if 'bias' in key]
+                for bias_k in bias_keys:
+                    des_len = len(ssd_conf_dict[bias_k])
+                    if des_len < len(conf_weights[bias_k]):
+                        conf_weights[bias_k] = conf_weights[bias_k][:des_len]
+                        w_key = bias_k.replace('bias', 'weight')
+                        conf_weights[w_key] = conf_weights[w_key][:des_len, ...]
+                    else:
+                        raise RuntimeError(
+                            'Can only reduce the number of initialisation ' +
+                            'params for coercion. des_len=' +
+                            '{}; act len={}'.format(des_len,
+                                                    len(conf_weights[bias_k])))
 
+            # coerce conf weights depending on number of classes
+            # TODO make strict=False for this init
+            ssd_net.conf.load_state_dict(conf_weights)
+
+    print('Setting up optimizer and loss criterion...')
     optimizer = optim.SGD(net.parameters(), lr=args.lr,
                           momentum=args.momentum, weight_decay=args.weight_decay)
     criterion = MultiBoxLoss(num_classes, 0.5, True, 0,
                              True, 3, 0.5, False, args.cuda)
 
     train()
+    print('\nJob path "{}"'.format(job_path))
