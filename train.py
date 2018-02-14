@@ -61,8 +61,24 @@ def writeParamsTxt(filename, args, others=None):
                 f.write('{}: {}\n'.format(key, str(item)))
 
 
+def eval_(ssd_net, eval_dataset, job_path, epoch_n, cuda):
+    eval_path = os.path.join(job_path, 'evalfiles')
+    if os.path.isdir(eval_path):
+        # current eval code will just re-use contents of eval_path
+        shutil.rmtree(eval_path)
+    ssd_net.eval()
+    ssd_net.phase = 'test'
+    mean_ap = utils.ssd_eval.eval_ssd(
+        eval_dataset, ssd_net, eval_path, cuda=cuda, ovthresh=0.3)
+    ssd_net.phase = 'train'
+    ssd_net.train()
+    if epoch_n is not None:
+        writer.add_scalar('eval/ap_per_epoch', mean_ap, epoch_n)
+    return mean_ap
+
+
 def train():
-    net.train()
+    ssd_net.train()
     # loss counters
     loc_loss = 0  # epoch
     conf_loss = 0
@@ -76,7 +92,7 @@ def train():
     batch_iterator = None
     train_loader = data.DataLoader(
         train_dataset, batch_size, num_workers=args.num_workers,
-        shuffle=True, collate_fn=detection_collate, pin_memory=False)
+        shuffle=True, collate_fn=detection_collate, pin_memory=True)
     # eval_loader = data.DataLoader(
     #     eval_dataset, batch_size, num_workers=args.num_workers, shuffle=False,
     #     pin_memory=False)
@@ -109,7 +125,7 @@ def train():
             targets = [Variable(anno, volatile=True) for anno in targets]
         # forward
         t0 = time.time()
-        out = net(images)
+        out = ssd_net(images)
         # backprop
         optimizer.zero_grad()
         loss_l, loss_c = criterion(out, targets)
@@ -136,7 +152,7 @@ def train():
             losses_d = {'total_loss': total_loss, 'loc_loss': loss_l.data[0],
                         'conf_loss': loss_c.data[0]}
             writer.add_scalars('loss/l_per_epoch', losses_d, epoch_n)
-            for name, param in net.named_parameters():
+            for name, param in ssd_net.named_parameters():
                 writer.add_histogram(
                     name.replace('.', '/'),
                     param.clone().cpu().data.numpy(), iteration)
@@ -144,18 +160,6 @@ def train():
                 save_weights, 'ssd{}_epoch{}_iter{}_{}.pth'.format(
                     ssd_dim, epoch_n, iteration, args.dataset))
             torch.save(ssd_net.state_dict(), sstr)
-            eval_path = os.path.join(job_path, 'evalfiles')
-            if os.path.isdir(eval_path):
-                # current eval code will just re-use contents of eval_path
-                shutil.rmtree(eval_path)
-            print('Setting network to eval mode...')
-            net.eval()
-            ssd_net.phase = 'test'
-            # utils.ssd_eval.eval_ssd(eval_dataset, net,
-            #                         eval_path, cuda=args.cuda, ovthresh=0.3)
-            ssd_net.phase = 'train'
-            net.train()
-            print('setting network back to train mode')
 
         if iteration % 1000 == 0 and iteration > 0:
             if args.send_images_to_tb:
@@ -172,11 +176,11 @@ def train():
                 save_weights, 'ssd{}_{}_{}.pth'.format(
                     str(ssd_dim), repr(iteration), args.dataset))
             torch.save(ssd_net.state_dict(), sstr)
-            # eval_network(net.eval(), eval_iter, writer)
-            # net.train()
+    eval_(ssd_net, eval_dataset, job_path, epoch_n, args.cuda)
     torch.save(ssd_net.state_dict(), os.path.join(save_weights,
                                                   'ssd{}_final_{}.pth'.format(
                                                       str(ssd_dim), args.dataset)))
+
 
 
 def adjust_learning_rate(optimizer, gamma, step):
@@ -330,11 +334,11 @@ if __name__ == '__main__':
                    {'stepvalues': stepvalues})
 
     ssd_net = build_ssd('train', 300, num_classes)
-    net = ssd_net
+    # net = ssd_net
 
-    if args.cuda:
-        net = torch.nn.DataParallel(ssd_net)
-        cudnn.benchmark = True
+    # if args.cuda:
+    #     net = torch.nn.DataParallel(ssd_net)
+    #     cudnn.benchmark = True
 
     if args.resume:
         print('Resuming training, loading {}...'.format(args.resume))
@@ -343,6 +347,7 @@ if __name__ == '__main__':
     else:
         assert os.path.isfile(args.basenet), 'Invalid "%s"' % args.basenet
         print('Loading base network...')
+        # weights loaded intp CPU memory
         vgg_weights = torch.load(args.basenet,
                                  map_location=lambda storage, loc: storage)
         conf_weights = extract_dict_keys(vgg_weights, 'conf.')
@@ -355,7 +360,9 @@ if __name__ == '__main__':
 
     if args.cuda:
         print('Training network on GPU with CUDA')
-        net = net.cuda()
+        ssd_net.cuda()
+        cudnn.benchmark = True
+        # net = net.cuda()
     else:
         print('Training on CPU')
 
@@ -402,10 +409,15 @@ if __name__ == '__main__':
             ssd_net.conf.load_state_dict(conf_weights)
 
     print('Setting up optimizer and loss criterion...')
-    optimizer = optim.SGD(net.parameters(), lr=args.lr,
+    optimizer = optim.SGD(ssd_net.parameters(), lr=args.lr,
                           momentum=args.momentum, weight_decay=args.weight_decay)
     criterion = MultiBoxLoss(num_classes, 0.5, True, 0,
                              True, 3, 0.5, False, args.cuda)
 
     train()
-    print('\nJob path "{}"'.format(job_path))
+    print('\nEvaluating saved states from "{}"'.format(job_path))
+    if train_loader:
+        del train_loader
+    del ssd_net
+    utils.ssd_eval.eval_saved_states(job_path, eval_dataset, args.cuda)
+    print('Done. Job path "{}"'.format(job_path))
