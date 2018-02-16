@@ -30,6 +30,8 @@ except ImportError:
 
 MINING_CLASSES = ('mine_vehicle', 'car', 'signs', 'pole', 'person', 'slips')
 mining_root = '/home/sean/hpc-home/Mining_Site/MM_Car_Cam'
+PUDDLE_CLASSES = ('puddle')
+
 
 work_dir = '/home/sean/hpc-home' if os.path.isdir(
     '/home/sean') else expanduser("~")
@@ -55,13 +57,16 @@ class MiningAnnotationTransform(object):
     def anno2bbox(self, sloth_anno, w, h):
         assert sloth_anno['type'] == 'rect', 'invalid label type "{}"'.format(
             sloth_anno['type'])
-        x1 = sloth_anno['x'] / w
-        y1 = sloth_anno['y'] / h
-        x2 = sloth_anno['x'] + sloth_anno['width']
-        x2 /= w
-        y2 = sloth_anno['y'] + sloth_anno['height']
-        y2 /= h
-        return [x1, y1, x2, y2, self.class_to_ind[sloth_anno['class']]]
+        if sloth_anno:
+            x1 = sloth_anno['x'] / w
+            y1 = sloth_anno['y'] / h
+            x2 = sloth_anno['x'] + sloth_anno['width']
+            x2 /= w
+            y2 = sloth_anno['y'] + sloth_anno['height']
+            y2 /= h
+            return [x1, y1, x2, y2, self.class_to_ind[sloth_anno['class']]]
+        else:
+            return []
 
 
 class MiningDataset(VOCDetection):
@@ -97,11 +102,15 @@ class MiningDataset(VOCDetection):
             else:
                 n_name = datum['filename']
             n_name = n_name.replace('//', '/')
+            if self.root not in n_name:
+                n_name = os.path.join(self.root, n_name)
+            assert os.path.isfile(n_name), 'Invalid img "{}"'.format(n_name)
             self.im_names.append(str(n_name))
             self.targets.append(datum['annotations'])
             # self.targets += [self.anno2bbox(bb) for bb in
             # datum['annotations']]
-        assert len(self.im_names) == len(self.targets), '\nlen img names: {}\n len targets {}'.format(
+        assert len(self.im_names) == len(
+            self.targets), '\nlen img names: {}\n len targets {}'.format(
             len(self.im_names), len(self.targets))
 
     def __getitem__(self, index):
@@ -124,8 +133,6 @@ class MiningDataset(VOCDetection):
 
     def pull_image(self, index):
         img_name = self.im_names[index]
-        assert os.path.isfile(
-            img_name), 'Invalid name {} - "{}"'.format(index, img_name)
         return cv2.imread(img_name, cv2.IMREAD_COLOR)
 
     def pull_image_name(self, index):
@@ -135,7 +142,7 @@ class MiningDataset(VOCDetection):
         img_name = self.im_names[index]
         target = self.targets[index]
         # Beause I don't trust opencv to handle invalid file names.
-        assert os.path.isfile(img_name), 'Invalid file "{}"'.format(img_name)
+        # assert os.path.isfile(img_name), 'Invalid file "{}"'.format(img_name)
         img = cv2.imread(img_name, cv2.IMREAD_COLOR)
 
         if img is None:
@@ -154,12 +161,34 @@ class MiningDataset(VOCDetection):
 
         if self.transform is not None:
             target = np.array(target)
-            img, boxes, labels = self.transform(
-                img, target[:, :4], target[:, 4])
+            if target.size > 0:
+                img, boxes, labels = self.transform(
+                    img, target[:, :4], target[:, 4])
+                target = np.hstack((boxes, np.expand_dims(labels, axis=1)))
+            else:
+                # no label, use dummy label so augmentators still work.
+                dummy_target = np.array([[0.37, 0.43888889,
+                                          0.48, 0.51666667, 0],
+                                         [0.11925153, 0.47208082,
+                                          0.13284576, 0.59086683, 0]])
+                img, boxes, labels = self.transform(
+                    img, dummy_target[..., :4], dummy_target[..., 4])
             # to rgb
             img = img[:, :, (2, 1, 0)]
-            target = np.hstack((boxes, np.expand_dims(labels, axis=1)))
+
         return torch.from_numpy(img).permute(2, 0, 1), target, height, width
+
+
+class PuddleDataset(MiningDataset):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.number_classes = 1 + 1  # puddle + background
+        self.classes = PUDDLE_CLASSES
+        if self.name == 'MiningToy':
+            self.name = 'PUDDLES'
+
+    def num_classes(self):
+        return self.number_classes
 
 
 def getMiningMean(root, json_files):
@@ -174,7 +203,7 @@ def getMiningMean(root, json_files):
         json_files = os.path.basename(njson_file)
 
     mdata = MiningDataset(root, transform=None,
-                          target_transform=MiningAnnotationTransform(),
+                          target_transform=None,
                           json_set=json_files)
     mean = np.zeros(3)
     print('Calulating mean from {} ({} images)'.format(
@@ -224,17 +253,32 @@ if __name__ == '__main__':
     ssd_dim = 300
     voc_means = (104, 117, 123)
 
-    mining_root = '/home/sean/hpc-home/Mining_Site/MM_Car_Cam'
+    mining_root = '/media/sean/mydrive/Mining_Site/MM_Car_Cam'
     json_file = 'train_gopro1_scraped_all_labelled'
     # json_file = rmNonLabelledInstances(mining_root, json_file, json_file + '_all_labelled')
-    m_mean = getMiningMean(mining_root, json_file)
-    print('mining mean = {}'.format(m_mean))
-    m_mean = [round(m) for m in m_mean]
-    print('mining mean rounded = {}'.format(m_mean))
     m_save = os.path.join(os.path.dirname(
         os.path.realpath(__file__)), 'toy_mining_means.txt')
-    with open(m_save, 'w') as f:
-        f.write(str(m_mean))
+    if not os.path.isfile(m_save):
+        m_mean = getMiningMean(mining_root, json_file)
+        print('mining mean = {}'.format(m_mean))
+        m_mean = [round(m) for m in m_mean]
+        print('mining mean rounded = {}'.format(m_mean))
+        with open(m_save, 'w') as f:
+            f.write(str(m_mean))
+    else:
+        m_mean = [65.0, 69.0, 76.0]
+
+    # Puddle Detection Dataset
+    puddle_root = '/home/sean/Downloads/road_slip_hazards'
+    pjson_file = 'mine_and_car_puddles'
+    p_save = os.path.join(os.path.dirname(m_save),
+                          'all_puddle_dataset_means.txt')
+    if not os.path.isfile(p_save):
+        p_mean = getMiningMean(puddle_root, pjson_file)
+        with open(p_save, 'w') as f:
+            f.write(str(p_mean))
+    else:
+        p_mean = np.array([107.86730173, 106.28081276, 107.2159824])
 
     print('Testing Constructors')
     voc_dataset = VOCDetection(voc_root, voc_sets, SSDAugmentation(
@@ -244,11 +288,16 @@ if __name__ == '__main__':
         mining_root, transform=SSDMiningAugmentation(ssd_dim, m_mean),
         target_transform=MiningAnnotationTransform(), json_set=json_file)
 
-    data_iterators = [voc_dataset, mdataset]
+    pud_dataset = PuddleDataset(
+        puddle_root, transform=SSDMiningAugmentation(ssd_dim, p_mean),
+        target_transform=MiningAnnotationTransform(class_to_ind={'puddle': 0}),
+        json_set=pjson_file, dataset_name='PUDDLES')
+
+    data_iterators = [voc_dataset, mdataset, pud_dataset]
 
     for it in data_iterators:
         print('-' * 10)
-        print('Testing "{}":'.format(it.__class__.__name__))
+        print('Testing "{} - {}":'.format(it.__class__.__name__, it.name))
         print('-' * 10)
         print('Test pull_anno:\n', it.pull_anno(4))
         print('Test __len__:  ', it.__len__())
@@ -269,6 +318,7 @@ if __name__ == '__main__':
         print('Img dimensions {}. Range {} - {}'.format(im.size(),
                                                         im.min(), im.max()))
         print('Number of bboxes {}'.format(len(gt)))
+        print('Num classes {}'.format(it.num_classes()))
 
         if 'VOCDetection' not in it.__class__.__name__:
             print('Iterating over entire dataset...')
