@@ -30,7 +30,7 @@ except ImportError:
 
 MINING_CLASSES = ('mine_vehicle', 'car', 'signs', 'pole', 'person', 'slips')
 mining_root = '/home/sean/hpc-home/Mining_Site/MM_Car_Cam'
-PUDDLE_CLASSES = ('puddle')
+PUDDLE_CLASSES = ('puddle', 'non_puddle_img')
 
 
 work_dir = '/home/sean/hpc-home' if os.path.isdir(
@@ -161,18 +161,9 @@ class MiningDataset(VOCDetection):
 
         if self.transform is not None:
             target = np.array(target)
-            if target.size > 0:
-                img, boxes, labels = self.transform(
-                    img, target[:, :4], target[:, 4])
-                target = np.hstack((boxes, np.expand_dims(labels, axis=1)))
-            else:
-                # no label, use dummy label so augmentators still work.
-                dummy_target = np.array([[0.37, 0.43888889,
-                                          0.48, 0.51666667, 0],
-                                         [0.11925153, 0.47208082,
-                                          0.13284576, 0.59086683, 0]])
-                img, boxes, labels = self.transform(
-                    img, dummy_target[..., :4], dummy_target[..., 4])
+            img, boxes, labels = self.transform(
+                img, target[:, :4], target[:, 4])
+            target = np.hstack((boxes, np.expand_dims(labels, axis=1)))
             # to rgb
             img = img[:, :, (2, 1, 0)]
 
@@ -182,7 +173,8 @@ class MiningDataset(VOCDetection):
 class PuddleDataset(MiningDataset):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.number_classes = 1 + 1  # puddle + background
+        # puddle + blank img label + background
+        self.number_classes = 3
         self.classes = PUDDLE_CLASSES
         if self.name == 'MiningToy':
             self.name = 'PUDDLES'
@@ -190,6 +182,47 @@ class PuddleDataset(MiningDataset):
     def num_classes(self):
         return self.number_classes
 
+    def pull_item(self, index):
+        img_name = self.im_names[index]
+        target = self.targets[index]
+        # Beause I don't trust opencv to handle invalid file names.
+        # assert os.path.isfile(img_name), 'Invalid file "{}"'.format(img_name)
+        img = cv2.imread(img_name, cv2.IMREAD_COLOR)
+
+        if img is None:
+            print('Image read was "Nonetype" - "{}"'.format(img_name))
+            img = np.asarray(Image.open(img_name)).astype(np.uint8)
+            img = img[:, :, (2, 1, 0)]  # convert to bgr
+            # img = cv2.imread(img_name, cv2.IMREAD_COLOR)
+            # if img is None:
+            #     print('image is still none!')
+        height, width, channels = img.shape
+
+        if self.target_transform is not None:
+            target = self.target_transform(target, width, height)
+        else:
+            print('WARNING: Raw target values used.')
+
+        if self.transform is not None:
+            target = np.array(target)
+            if target.size > 0:
+                img, boxes, labels = self.transform(
+                    img, target[:, :4], target[:, 4])
+                target = np.hstack((boxes, np.expand_dims(labels, axis=1)))
+            else:
+                # no label, use dummy label so augmentators still work.
+                # dummy_target = np.array([[0.37, 0.43888889,
+                #                           0.48, 0.51666667, 0],
+                #                          [0.11925153, 0.47208082,
+                #                           0.13284576, 0.59086683, 0]])
+                dummy_target = np.array([[0.01, 0.01, 0.99, 0.99, 1]])
+                img, boxes, labels = self.transform(
+                    img, dummy_target[..., :4], dummy_target[..., 4])
+                target = np.hstack((boxes, np.expand_dims(labels, axis=1)))
+            # to rgb
+            img = img[:, :, (2, 1, 0)]
+
+        return torch.from_numpy(img).permute(2, 0, 1), target, height, width
 
 def getMiningMean(root, json_files):
     if isinstance(json_files, list):
@@ -323,6 +356,6 @@ if __name__ == '__main__':
         if 'VOCDetection' not in it.__class__.__name__:
             print('Iterating over entire dataset...')
             for idx in range(it.__len__()):
-                it.pull_item(idx)
+                im, gt, h, w = it.pull_item(idx)
 
         print('~' * 20, '\n')

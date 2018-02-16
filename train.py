@@ -158,7 +158,8 @@ def train():
                     param.clone().cpu().data.numpy(), iteration)
             sstr = os.path.join(
                 save_weights, 'ssd{}_epoch{}_iter{}_{}.pth'.format(
-                    ssd_dim, epoch_n, iteration, args.dataset))
+                    ssd_dim, str(epoch_n).replace('.', '-'),
+                    iteration, args.dataset))
             torch.save(ssd_net.state_dict(), sstr)
 
         if iteration % 1000 == 0 and iteration > 0:
@@ -180,7 +181,6 @@ def train():
     torch.save(ssd_net.state_dict(), os.path.join(save_weights,
                                                   'ssd{}_final_{}.pth'.format(
                                                       str(ssd_dim), args.dataset)))
-
 
 
 def adjust_learning_rate(optimizer, gamma, step):
@@ -290,12 +290,12 @@ if __name__ == '__main__':
     train_dataset = data_iters[args.dataset](
         args.data_root, train_sets[args.dataset],
         augmentators[args.dataset](args.ssd_dim, rgb_means[args.dataset]),
-        target_transforms[args.dataset]())
+        target_transforms[args.dataset])
 
     eval_dataset = data_iters[args.dataset](
         args.data_root, test_sets[args.dataset],
         augmentators[args.dataset](args.ssd_dim, rgb_means[args.dataset]),
-        target_transforms[args.dataset]())
+        target_transforms[args.dataset])
 
     num_classes = train_dataset.num_classes()
 

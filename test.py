@@ -11,6 +11,8 @@ from data import VOCroot, VOC_CLASSES
 from PIL import Image, ImageDraw, ImageFont
 from data import AnnotationTransform, VOCDetection, BaseTransform, VOC_CLASSES
 from data.mining import MiningDataset, MiningAnnotationTransform, MINING_CLASSES
+from data import train_sets, test_sets, rgb_means, data_iters
+from data import augmentators, target_transforms
 import torch.utils.data as data
 from ssd import build_ssd
 import numpy as np
@@ -30,6 +32,7 @@ parser.add_argument('--save_folder', default='eval', type=str,
                     help='Dir to save results')
 parser.add_argument('--visual_threshold', default=0.6, type=float,
                     help='Final confidence threshold')
+parser.add_argument('--ssd_dim', default=300, type=int)
 parser.add_argument('--cuda', default=torch.cuda.is_available(), type=str2bool,
                     help='Use cuda to train model')
 parser.add_argument('--data_root', default=VOCroot,
@@ -42,7 +45,9 @@ parser.add_argument('--vis_preds', default=True, type=str2bool,
                     help='If true save images with network detections')
 
 args = parser.parse_args()
-labelmaps = {'voc': VOC_CLASSES, 'mining': MINING_CLASSES}
+PUDDLE_CLASSES = ('puddle', 'non_puddle_img')
+labelmaps = {'voc': VOC_CLASSES, 'mining': MINING_CLASSES,
+             'puddles': PUDDLE_CLASSES}
 labelmap = labelmaps[args.dataset]
 
 
@@ -162,27 +167,21 @@ if __name__ == '__main__':
     if not os.path.exists(save_folder):
         os.mkdir(save_folder)
 
-    # load net
-     # +1 background
-    num_classes = {'voc': len(VOC_CLASSES) + 1,
-                   'mining': len(MINING_CLASSES) + 1}
-    means = {'voc': (104, 117, 123), 'mining': (65, 69, 76)}
-    net = build_ssd('test', 300, num_classes[args.dataset])  # initialize SSD
+    testset = data_iters[args.dataset](
+        args.data_root, train_sets[args.dataset],
+        augmentators[args.dataset](args.ssd_dim, rgb_means[args.dataset]),
+        target_transforms[args.dataset])
+
+    net = build_ssd('test', 300, testset.num_classes())  # initialize SSD
     net.load_state_dict(torch.load(args.trained_model))
     net.eval()
     print('Finished loading model!')
-    # load data
-    split = {'voc': [('2007', 'test')], 'mining': args.test_split}
-    anno = {'voc': AnnotationTransform(), 'mining': MiningAnnotationTransform()}
-    datasets = {
-        'voc': VOCDetection, 'mining': MiningDataset}
-    testset = datasets[args.dataset](args.data_root, split[args.dataset],
-                                     None, anno[args.dataset])
+
     if args.cuda:
         net = net.cuda()
         cudnn.benchmark = True
     # evaluation
-    visualiseDataset(testset, save_folder + '_labels')
-    # test_net(save_folder, net, args.cuda, testset,
-    #          BaseTransform(net.size, means[args.dataset]),
-    #          thresh=args.visual_threshold, save_pred_img=args.vis_preds)
+    # visualiseDataset(testset, save_folder + '_labels')
+    test_net(save_folder, net, args.cuda, testset,
+             BaseTransform(net.size, rgb_means[args.dataset]),
+             thresh=args.visual_threshold, save_pred_img=args.vis_preds)

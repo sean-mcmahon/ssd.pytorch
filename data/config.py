@@ -12,15 +12,22 @@ ddir = os.path.join(home, "data/VOCdevkit/")
 
 # Dataset dicts for multi-dataset initializing
 train_sets = {'voc': [('2007', 'trainval'), ('2012', 'trainval')],
-              'mining': 'train_gopro1_scraped_all_labelled.json'}
+              'mining': 'train_gopro1_scraped_all_labelled.json',
+              'puddles': 'mine_and_car_puddles.json'}
 test_sets = {'voc': [('2007', 'test')],
-             'mining': 'test_gopro2_all_labelled.json'}
-rgb_means = {'voc': (104, 117, 123), 'mining': (65, 69, 76)}
-data_iters = {'voc': VOCDetection, 'mining': MiningDataset}
+             'mining': 'test_gopro2_all_labelled.json',
+             'puddles': 'mine_and_car_puddles.json'}
+rgb_means = {'voc': (104, 117, 123), 'mining': (65, 69, 76),
+             'puddles': (107.9, 106.3, 107.2)}
+data_iters = {'voc': VOCDetection, 'mining': MiningDataset,
+              'puddles': MiningDataset}
 augmentators = {'voc': SSDAugmentation,
-                'mining': SSDMiningAugmentation}
-target_transforms = {'voc': AnnotationTransform,
-                     'mining': MiningAnnotationTransform}
+                'mining': SSDMiningAugmentation,
+                'puddles': SSDMiningAugmentation}
+target_transforms = {'voc': AnnotationTransform(),
+                     'mining': MiningAnnotationTransform(),
+                     'puddles': MiningAnnotationTransform(
+                     class_to_ind={'puddle': 0})}
 
 # note: if you used our download scripts, this should be right
 VOCroot = ddir  # path to VOCdevkit root dir
