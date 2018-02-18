@@ -1,7 +1,7 @@
 # config.py
 import os.path
 import sys
-from data.mining import MiningAnnotationTransform, MiningDataset
+from data.mining import MiningAnnotationTransform, MiningDataset, PuddleDataset
 from data.voc0712 import AnnotationTransform, VOCDetection
 script_dir = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.dirname(script_dir))
@@ -20,7 +20,7 @@ test_sets = {'voc': [('2007', 'test')],
 rgb_means = {'voc': (104, 117, 123), 'mining': (65, 69, 76),
              'puddles': (107.9, 106.3, 107.2)}
 data_iters = {'voc': VOCDetection, 'mining': MiningDataset,
-              'puddles': MiningDataset}
+              'puddles': PuddleDataset}
 augmentators = {'voc': SSDAugmentation,
                 'mining': SSDMiningAugmentation,
                 'puddles': SSDMiningAugmentation}

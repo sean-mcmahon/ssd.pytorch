@@ -211,10 +211,6 @@ class PuddleDataset(MiningDataset):
                 target = np.hstack((boxes, np.expand_dims(labels, axis=1)))
             else:
                 # no label, use dummy label so augmentators still work.
-                # dummy_target = np.array([[0.37, 0.43888889,
-                #                           0.48, 0.51666667, 0],
-                #                          [0.11925153, 0.47208082,
-                #                           0.13284576, 0.59086683, 0]])
                 dummy_target = np.array([[0.01, 0.01, 0.99, 0.99, 1]])
                 img, boxes, labels = self.transform(
                     img, dummy_target[..., :4], dummy_target[..., 4])
@@ -223,6 +219,20 @@ class PuddleDataset(MiningDataset):
             img = img[:, :, (2, 1, 0)]
 
         return torch.from_numpy(img).permute(2, 0, 1), target, height, width
+
+    def pull_anno(self, index):
+        img_name = self.im_names[index]
+        if np.array(self.targets[index]).size < 1:
+            print('blank label')
+            img = self.pull_image(index)
+            img = self.pull_image(index) if img is None else img
+            h, w, channels = img.shape
+            dummy_target = np.array(
+                [[0.01 * w, 0.01 * h, 0.99 * w, 0.99 * h, 1]])
+            return [img_name, dummy_target]
+        targets = self.target_transform(self.targets[index], 1, 1)
+        return [img_name, targets]
+
 
 def getMiningMean(root, json_files):
     if isinstance(json_files, list):

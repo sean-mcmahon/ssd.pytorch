@@ -150,7 +150,8 @@ def visualiseDataset(dataset, save_path):
     for i in range(num_images):
         name = dataset.pull_image_name(i)
         print(
-            'Saving annoation image {:d}/{:d} ("{}")'.format(i + 1, num_images, name))
+            'Saving annoation image {:d}/{:d} ("{}")'.format(i + 1,
+                                                             num_images, name))
         img = dataset.pull_image(i)
         img_id, annotation = dataset.pull_anno(i)
         anno_list = []
@@ -171,6 +172,8 @@ if __name__ == '__main__':
         args.data_root, train_sets[args.dataset],
         augmentators[args.dataset](args.ssd_dim, rgb_means[args.dataset]),
         target_transforms[args.dataset])
+    print('Loaded Dataset {} - Type {}'.format(
+        testset.name, testset.__class__.__name__))
 
     net = build_ssd('test', 300, testset.num_classes())  # initialize SSD
     net.load_state_dict(torch.load(args.trained_model))
