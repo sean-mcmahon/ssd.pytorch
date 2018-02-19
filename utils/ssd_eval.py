@@ -414,12 +414,13 @@ def eval_saved_states(eval_dataset, jobdir, cuda, weightsdir='weights',
     pth_files = [os.path.basename(os.path.splitext(tt)[0]) for tt in pth_files]
     print('\n' + '~' * 10)
     with open(os.path.join(jobdir, 'eval_metrics.txt'), 'w') as f:
-        for ii in range(len(mean_aps)-1, 0, -1):
-            sstr = '{}. mAp = {} - "{}"'.format(ii, mean_aps[ii],
+        for count, ii in enumerate(range(len(mean_aps)-1, 0, -1), 1):
+            sstr = '{}. mAp = {} - "{}"'.format(count, mean_aps[ii],
                                                 pth_files[ii])
             f.write(sstr + '\n')
             print(sstr)
     print('~' * 10)
+    return os.path.join(w_path, pth_files[-1])
 
 
 def eval_ssd(data_iter, network, save_path, ovthresh=0.5, cuda=True,

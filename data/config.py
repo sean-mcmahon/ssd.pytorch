@@ -13,10 +13,10 @@ ddir = os.path.join(home, "data/VOCdevkit/")
 # Dataset dicts for multi-dataset initializing
 train_sets = {'voc': [('2007', 'trainval'), ('2012', 'trainval')],
               'mining': 'train_gopro1_scraped_all_labelled.json',
-              'puddles': 'mine_and_car_puddles.json'}
+              'puddles': 'puddle_labels.json'}
 test_sets = {'voc': [('2007', 'test')],
              'mining': 'test_gopro2_all_labelled.json',
-             'puddles': 'mine_and_car_puddles.json'}
+             'puddles': 'puddle_labels.json'}
 rgb_means = {'voc': (104, 117, 123), 'mining': (65, 69, 76),
              'puddles': (107.9, 106.3, 107.2)}
 data_iters = {'voc': VOCDetection, 'mining': MiningDataset,
@@ -28,6 +28,9 @@ target_transforms = {'voc': AnnotationTransform(),
                      'mining': MiningAnnotationTransform(),
                      'puddles': MiningAnnotationTransform(
                      class_to_ind={'puddle': 0})}
+dataset_roots = {'voc': '/home/sean/data/VOCdevkit/',
+                 'mining': '/media/sean/mydrive/Mining_Site/MM_Car_Cam/',
+                 'puddles': '/home/sean/Documents/road_slip_hazards/'}
 
 # note: if you used our download scripts, this should be right
 VOCroot = ddir  # path to VOCdevkit root dir

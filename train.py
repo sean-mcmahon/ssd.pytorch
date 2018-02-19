@@ -12,7 +12,8 @@ import torch.utils.data as data
 from data import v2, v1
 from data import detection_collate, VOCroot
 from data import train_sets, test_sets, rgb_means, data_iters
-from data import augmentators, target_transforms
+from data import augmentators, target_transforms, dataset_roots
+from test import save_predictions
 import utils.ssd_eval
 # from data.mining import MiningDataset, MiningAnnotationTransform
 # from utils.augmentations import SSDAugmentation, SSDMiningAugmentation
@@ -252,7 +253,7 @@ if __name__ == '__main__':
                         ' send it to tensorboard after augmentations step')
     parser.add_argument('--save_folder', default='/home/sean/Documents/ssd/',
                         help='Location to save checkpoint models')
-    parser.add_argument('--data_root', default=VOCroot,
+    parser.add_argument('--data_root', default=None,
                         help='Location of VOC root directory')
     parser.add_argument('--dataset', default='voc', type=str)
     args = parser.parse_args()
@@ -272,14 +273,18 @@ if __name__ == '__main__':
     max_iter = args.iterations
 
     print('Loading Dataset...')
-    assert os.path.exists(args.data_root), 'root invalid "%s"' % args.data_root
+    if args.data_root is None:
+        d_root = dataset_roots[args.dataset]
+    else:
+        d_root = args.data_root
+    assert os.path.exists(d_root), 'root invalid "%s"' % d_root
     train_dataset = data_iters[args.dataset](
-        args.data_root, train_sets[args.dataset],
+        d_root, train_sets[args.dataset],
         augmentators[args.dataset](args.ssd_dim, rgb_means[args.dataset]),
         target_transforms[args.dataset])
 
     eval_dataset = data_iters[args.dataset](
-        args.data_root, test_sets[args.dataset],
+        d_root, test_sets[args.dataset],
         augmentators[args.dataset](args.ssd_dim, rgb_means[args.dataset]),
         target_transforms[args.dataset])
 
@@ -419,6 +424,9 @@ if __name__ == '__main__':
     if train_loader is not None:
         del train_loader
     del ssd_net
-    utils.ssd_eval.eval_saved_states(eval_dataset, job_path,
-                                     args.cuda, ssd_dim=ssd_dim)
+    best_weights = utils.ssd_eval.eval_saved_states(eval_dataset, job_path,
+                                                    args.cuda, ssd_dim=ssd_dim)
+    save_predictions(
+        os.path.join(job_path, 'visualisations'), best_weights, eval_dataset,
+        cuda=args.cuda)
     print('Done. Job path "{}"'.format(job_path))

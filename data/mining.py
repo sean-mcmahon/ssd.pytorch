@@ -223,7 +223,6 @@ class PuddleDataset(MiningDataset):
     def pull_anno(self, index):
         img_name = self.im_names[index]
         if np.array(self.targets[index]).size < 1:
-            print('blank label')
             img = self.pull_image(index)
             img = self.pull_image(index) if img is None else img
             h, w, channels = img.shape
