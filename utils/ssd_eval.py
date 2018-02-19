@@ -388,28 +388,37 @@ def eval_saved_states(eval_dataset, jobdir, cuda, weightsdir='weights',
         shutil.rmtree(e_path)
     assert os.path.isdir(w_path)
     ssd_net = build_ssd('test', ssd_dim, eval_dataset.num_classes())
-    pth_files = [ff for ff in os.listdir(w_path) if ff.endswith('.pth')]
+    pth_files = [os.path.join(
+        w_path, ff) for ff in os.listdir(w_path) if ff.endswith('.pth')]
     # epochs = [i for i in pth_files if 'epoch' in i]
+    assert len(pth_files) > 1, 'Not enough files found at %s' % w_path
     mean_aps = []
     for ii, pth in enumerate(pth_files):
-        print('Testing file {}/{}...'.format(ii, len(pth_files)))
+        print('Testing file {}/{} ("{}")...'.format(ii + 1, len(pth_files),
+                                                    os.path.basename(pth)))
         weights = torch.load(pth, map_location=lambda storage, loc: storage)
         ssd_net.load_state_dict(weights)
         if cuda:
             ssd_net.cuda()
             cudnn.benchmark = True
         ssd_net.eval()
+        if os.path.isdir(e_path):
+            shutil.rmtree(e_path)
         mean_ap = eval_ssd(
             eval_dataset, ssd_net, e_path, cuda=cuda, ovthresh=0.3)
         mean_aps.append(mean_ap)
     # sort mean_ap in decending order and apply the same indexing to pth_files
     # https://stackoverflow.com/questions/9764298/is-it-possible-to-sort-two-listswhich-reference-each-other-in-the-exact-same-w
-    mean_ap, pth_files = (list(t)
-                          for t in zip(*sorted(zip(mean_ap, pth_files))))
+    mean_aps, pth_files = (list(t)
+                           for t in zip(*sorted(zip(mean_aps, pth_files))))
     pth_files = [os.path.basename(os.path.splitext(tt)[0]) for tt in pth_files]
-    print('\n', '~' * 10)
-    for ii in range(5):
-        print('{}. mAp = {} - "{}"'.format(ii, mean_ap[ii], pth_files[ii]))
+    print('\n' + '~' * 10)
+    with open(os.path.join(jobdir, 'eval_metrics.txt'), 'w') as f:
+        for ii in range(len(mean_aps)-1, 0, -1):
+            sstr = '{}. mAp = {} - "{}"'.format(ii, mean_aps[ii],
+                                                pth_files[ii])
+            f.write(sstr + '\n')
+            print(sstr)
     print('~' * 10)
 
 

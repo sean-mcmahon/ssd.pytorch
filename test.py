@@ -124,16 +124,26 @@ def visResults(detections, images, save_path):
             print('Saved %d/%d images' % (count, len(images)))
 
 
-def visRes(det, img, save_path, name, conf=False):
+def visRes(dets, img, save_path, name, conf=False, sort_dets=True):
     fnt = ImageFont.truetype('Pillow/Tests/fonts/FreeMono.ttf', 25)
     if not os.path.isdir(save_path):
         os.mkdir(save_path)
-    assert isinstance(det, list)
+    assert isinstance(dets, list)
     if isinstance(img, np.ndarray):
         img = img[:, :, (2, 1, 0)]
         img = Image.fromarray(img.astype(np.uint8))
     draw = ImageDraw.Draw(img)
-    for bbox in det:
+    # remove puddles
+    if sort_dets:
+        sortdets = sorted(dets, key=lambda x: x[5])
+        if len(sortdets) > 10:
+            sort_iter = sortdets[-10:-1]
+        else:
+            sort_iter = sortdets
+    else:
+            sort_iter = dets
+    sort_iter = [dd for dd in sort_iter if 'non_puddle_img' not in dd[4]]
+    for bbox in sort_iter:
         draw.rectangle(bbox[0:4], outline=(255, 0, 0))
         if conf:
             txt = " ".join((bbox[4], str(round(bbox[5], 3))))
@@ -164,7 +174,8 @@ def visualiseDataset(dataset, save_path):
 
 
 if __name__ == '__main__':
-    save_folder = args.save_folder + '_%s' % args.dataset
+    save_folder = args.save_folder + '_%sthesh_%s' % (
+        str(int(args.visual_threshold * 100)), args.dataset)
     if not os.path.exists(save_folder):
         os.mkdir(save_folder)
 

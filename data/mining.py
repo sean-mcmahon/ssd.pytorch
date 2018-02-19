@@ -336,7 +336,7 @@ if __name__ == '__main__':
         target_transform=MiningAnnotationTransform(class_to_ind={'puddle': 0}),
         json_set=pjson_file, dataset_name='PUDDLES')
 
-    data_iterators = [voc_dataset, mdataset, pud_dataset]
+    data_iterators = [pud_dataset, voc_dataset, mdataset]
 
     for it in data_iterators:
         print('-' * 10)
@@ -362,10 +362,25 @@ if __name__ == '__main__':
                                                         im.min(), im.max()))
         print('Number of bboxes {}'.format(len(gt)))
         print('Num classes {}'.format(it.num_classes()))
+        class_instances = np.zeros(it.num_classes())
+        class_per_img = np.zeros(it.num_classes())
 
         if 'VOCDetection' not in it.__class__.__name__:
             print('Iterating over entire dataset...')
             for idx in range(it.__len__()):
                 im, gt, h, w = it.pull_item(idx)
+                labels = gt[:, -1].astype(np.int)
+                class_per_img[np.unique(labels)] += 1
+                for ll in labels:
+                    class_instances[ll] += 1
+            cls_per = class_instances*100 / np.sum(class_instances)
+            cls_per_image = class_per_img*100 / len(it)
+            for i in range(it.num_classes()-1):
+                print('{}% of labels are "{}"'.format(
+                    round(cls_per[i], 3), it.classes[i]))
+                print('{}% '.format(round(cls_per_image[i], 3)) +
+                      'of images have at least one instance of ' +
+                      '"{}"'.format(it.classes[i]))
+                print(' ')
 
         print('~' * 20, '\n')

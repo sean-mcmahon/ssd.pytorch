@@ -68,6 +68,7 @@ def eval_(ssd_net, eval_dataset, job_path, epoch_n, cuda):
         shutil.rmtree(eval_path)
     ssd_net.eval()
     ssd_net.phase = 'test'
+    print('\n')
     mean_ap = utils.ssd_eval.eval_ssd(
         eval_dataset, ssd_net, eval_path, cuda=cuda, ovthresh=0.3)
     ssd_net.phase = 'train'
@@ -84,10 +85,7 @@ def train():
     conf_loss = 0
     epoch = 0
 
-    print('Using "{}" Data Iterator'.format(train_dataset.__class__.__name__))
-
     epoch_size = len(train_dataset) // args.batch_size
-    print('Training SSD on', train_dataset.name)
     step_index = 0
     batch_iterator = None
     train_loader = data.DataLoader(
@@ -102,6 +100,7 @@ def train():
             # create batch iterator
             batch_iterator = iter(train_loader)
         if iteration in stepvalues:
+            print('(Lowering LR)')
             step_index += 1
             adjust_learning_rate(optimizer, args.gamma, step_index)
             new_lr = optimizer.param_groups[0]['lr']
@@ -145,22 +144,23 @@ def train():
             print('iter ' + repr(iteration) + ' || Loss: %.4f ||' % (
                 loss.data[0]), end=' ')
         if iteration % epoch_size == 0:
-            epoch_n = iteration / epoch_size
-            print('\n--> Epoch ' + repr(epoch_n) + ' ++ Loss: %.4f ++' % (
-                loss.data[0]) + ' ({} iterations)'.format(iteration))
-            total_loss = loss_l.data[0] + loss_c.data[0]
-            losses_d = {'total_loss': total_loss, 'loc_loss': loss_l.data[0],
-                        'conf_loss': loss_c.data[0]}
-            writer.add_scalars('loss/l_per_epoch', losses_d, epoch_n)
             for name, param in ssd_net.named_parameters():
                 writer.add_histogram(
                     name.replace('.', '/'),
                     param.clone().cpu().data.numpy(), iteration)
+            epoch_n = iteration / epoch_size
             sstr = os.path.join(
                 save_weights, 'ssd{}_epoch{}_iter{}_{}.pth'.format(
                     ssd_dim, str(epoch_n).replace('.', '-'),
                     iteration, args.dataset))
             torch.save(ssd_net.state_dict(), sstr)
+            print('\n--> Epoch ' + repr(epoch_n) + ' ++ Loss: %.4f ++' % (
+                loss.data[0]) + ' ({} iterations)'.format(iteration))
+            total_loss = loss_l.data[0] + loss_c.data[0]
+            losses_d = {'total_loss': total_loss,
+                        'loc_loss': loss_l.data[0],
+                        'conf_loss': loss_c.data[0]}
+            writer.add_scalars('loss/l_per_epoch', losses_d, epoch_n)
 
         if iteration % 1000 == 0 and iteration > 0:
             if args.send_images_to_tb:
@@ -172,11 +172,11 @@ def train():
                                             normalize=True, scale_each=True)
                 writer.add_image(
                     'aug_image', imgx, iteration)
-            print('\nSaving state, iter:', iteration, end=' ')
-            sstr = os.path.join(
-                save_weights, 'ssd{}_{}_{}.pth'.format(
-                    str(ssd_dim), repr(iteration), args.dataset))
-            torch.save(ssd_net.state_dict(), sstr)
+            # print('\nSaving state, iter:', iteration, end=' ')
+            # sstr = os.path.join(
+            #     save_weights, 'ssd{}_{}_{}.pth'.format(
+            #         str(ssd_dim), repr(iteration), args.dataset))
+            # torch.save(ssd_net.state_dict(), sstr)
     eval_(ssd_net, eval_dataset, job_path, epoch_n, args.cuda)
     torch.save(ssd_net.state_dict(), os.path.join(save_weights,
                                                   'ssd{}_final_{}.pth'.format(
@@ -270,20 +270,6 @@ if __name__ == '__main__':
     accum_batch_size = 32
     iter_size = accum_batch_size / batch_size
     max_iter = args.iterations
-    if args.dataset == 'mining':
-        stepvalues = (150, 300, 450, 600)
-    else:
-        stepvalues = (80000, 100000, 120000)
-
-    # train_sets = {'voc': [('2007', 'trainval'), ('2012', 'trainval')],
-    #               'mining': 'split2/train_gopro2_scraped.json'}
-    # rgb_means = {'voc': (104, 117, 123), 'mining': (65, 69, 76)}
-    # data_iters = {'voc': VOCDetection, 'mining': MiningDataset}
-    # augmentators = {'voc': SSDAugmentation(ssd_dim, rgb_means['voc']),
-    #                 'mining': SSDMiningAugmentation(ssd_dim,
-    #                                                 rgb_means['mining'])}
-    # target_transforms = {'voc': AnnotationTransform,
-    #                      'mining': MiningAnnotationTransform}
 
     print('Loading Dataset...')
     assert os.path.exists(args.data_root), 'root invalid "%s"' % args.data_root
@@ -298,6 +284,18 @@ if __name__ == '__main__':
         target_transforms[args.dataset])
 
     num_classes = train_dataset.num_classes()
+
+    print('Loaded on {} data ({} classes), with Iterator {}'.format(
+        train_dataset.name, num_classes, train_dataset.__class__.__name__))
+
+    epoch_iter = len(train_dataset) // args.batch_size
+    max_epochs = args.iterations // epoch_iter
+    if 'voc' in args.dataset.lower():
+        stepvalues = (80000, 100000, 120000)
+    else:
+        # lower Lr every epoch
+        ep_list = [epoch_iter] * max_epochs
+        stepvalues = [ep * count for ep, count in enumerate(ep_list, 1)]
 
     if os.path.isdir('/home/sean'):
         h_dir = '/home/sean'
@@ -333,7 +331,7 @@ if __name__ == '__main__':
     writeParamsTxt(os.path.join(job_path, 'params.txt'), args,
                    {'stepvalues': stepvalues})
 
-    ssd_net = build_ssd('train', 300, num_classes)
+    ssd_net = build_ssd('train', ssd_dim, num_classes)
     # net = ssd_net
 
     # if args.cuda:
@@ -346,7 +344,8 @@ if __name__ == '__main__':
         ssd_net.load_weights(args.resume)
     else:
         assert os.path.isfile(args.basenet), 'Invalid "%s"' % args.basenet
-        print('Loading base network...')
+        print('Loading base network from %s...' %
+              (os.path.basename(args.basenet)))
         # weights loaded intp CPU memory
         vgg_weights = torch.load(args.basenet,
                                  map_location=lambda storage, loc: storage)
@@ -413,11 +412,13 @@ if __name__ == '__main__':
                           momentum=args.momentum, weight_decay=args.weight_decay)
     criterion = MultiBoxLoss(num_classes, 0.5, True, 0,
                              True, 3, 0.5, False, args.cuda)
+    train_loader = None  # because i check for this later
 
     train()
     print('\nEvaluating saved states from "{}"'.format(job_path))
-    if train_loader:
+    if train_loader is not None:
         del train_loader
     del ssd_net
-    utils.ssd_eval.eval_saved_states(job_path, eval_dataset, args.cuda)
+    utils.ssd_eval.eval_saved_states(eval_dataset, job_path,
+                                     args.cuda, ssd_dim=ssd_dim)
     print('Done. Job path "{}"'.format(job_path))
