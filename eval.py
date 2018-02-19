@@ -126,7 +126,7 @@ def do_python_eval(output_dir='output', use_07=True):
     cachedir = os.path.join(output_dir, 'annotations_cache')
     aps = []
     # The PASCAL VOC metric changed in 2010
-    use_07_metric = use_07
+    use_07_metric = False
     print('VOC07 metric? ' + ('Yes' if use_07_metric else 'No'))
     if not os.path.isdir(output_dir):
         os.mkdir(output_dir)
@@ -146,6 +146,7 @@ def do_python_eval(output_dir='output', use_07=True):
         print('{:.3f}'.format(ap))
     print('{:.3f}'.format(np.mean(aps)))
     print('~~~~~~~~')
+    print('VOC07 metric? ' + ('Yes' if use_07_metric else 'No'))
     print('')
     print('--------------------------------------------------------------')
     print('Results computed with the **unofficial** Python eval code.')
@@ -161,7 +162,7 @@ def voc_ap(rec, prec, use_07_metric=True):
     """
 
     # 0.8206971977644537
-    use_07_metric = False
+    # use_07_metric = False
     if use_07_metric:
         # 11 point metric
         ap = 0.
@@ -172,10 +173,6 @@ def voc_ap(rec, prec, use_07_metric=True):
                 p = np.max(prec[rec >= t])
             ap = ap + p / 11.
     else:
-        pp = np.zeros(rec.size)
-        for ii in range(1, rec.size):
-            pp[ii] = (rec[ii] - rec[ii-1]) * prec[ii]
-        my_ap = np.sum(pp)
         # correct AP calculation
         # first append sentinel values at the end
         mrec = np.concatenate(([0.], rec, [1.]))
@@ -314,8 +311,8 @@ cachedir: Directory for caching the annotations
                         fp[d] = 1.
             else:
                 fp[d] = 1.
-        ffname = os.path.join(cachedir, '{}_fp_tp.pkl'.format(classname))
-        with open(ffname, 'wb') as f:
+        ffname = os.path.join(cachedir, '{}_fp_tp.pkl'.format(classname) )
+        with open('{}_fp_tp.pkl'.format(classname), 'wb') as f:
             pickle.dump({'fp': fp, 'tp': tp, 'npos': npos}, f)
         # compute precision recall
         fp = np.cumsum(fp)

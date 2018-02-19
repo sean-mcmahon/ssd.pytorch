@@ -103,24 +103,31 @@ def calcMetrics(dets, gt, classname, dataset, thresh=0.5, use_07_metric=False):
                 assert len(cls_r) - sum(difficult) == sum(~difficult), (
                     'diff={}. cls_r={}'.format(difficult, cls_r))
             else:
-                difficult = []
+                difficult = np.array([]).astype(np.bool)
 
             det = [False] * len(cls_r)
             # should be equivalent to 'npos = npos + sum(~difficult)'
             num_pos += len(cls_r) - sum(difficult)
-            if np.any(gt[imname][:, :4] < 1.0):
+            if np.all(gt[imname][:, :4] <= 1.0):
                 height, width, channels = dataset.pull_image(idx).shape
+                import pdb
+                pdb.set_trace()
+                print('Multiplying gts by image dimes, should this be happening?')
                 gt[imname][:, 0] *= width
                 gt[imname][:, 2] *= width
                 gt[imname][:, 1] *= height
                 gt[imname][:, 3] *= height
+                assert np.any(gt[imname][:, 0] < width)
             bbox = np.array([bb[0:4] for bb in cls_r])
-            class_recs[imname] = {'bbox': bbox, 'det': det,
+            class_recs[imname] = {'bbox': bbox.astype(np.int64), 'det': det,
                                   'difficult': difficult}
         else:
             # image has no instances of class 'classname'
             class_recs[imname] = {'bbox': np.array(
-                []), 'det': [], 'difficult': []}
+                []), 'det': [], 'difficult': np.array([]).astype(np.bool)}
+
+    compare_gts(class_recs, '/home/sean/hpc-home/SSD_detection/src/eval/ssd300_120000/test/annotations_cache/annots.pkl',
+                classname)
 
     cls_dets_arr = dets[cls_id][:]
     dets_count = []
@@ -140,7 +147,8 @@ def calcMetrics(dets, gt, classname, dataset, thresh=0.5, use_07_metric=False):
     if classname == 'aeroplane':
         plane_resfile = '/home/sean/hpc-home/SSD_detection/' + \
             'results/eval_voc/ssd300_120000/test/aeroplane_pr.pkl'
-        pl_pr_file = plane_resfile.replace('aeroplane_pr', 'voc_aeroplane_fp_tp')
+        pl_pr_file = plane_resfile.replace(
+            'aeroplane_pr', 'voc_aeroplane_fp_tp')
         with open(plane_resfile, 'rb') as f:
             pl_res = pickle.load(f)
         with open(pl_pr_file, 'rb') as f:
@@ -168,7 +176,8 @@ def calcMetrics(dets, gt, classname, dataset, thresh=0.5, use_07_metric=False):
             assert num_dets_so_far + b_num < dets_count[-1], (
                 '%d < %d' % (num_dets_so_far + b_num, dets_count[-1]))
             ovmax = -np.inf
-            import pdb; pdb.set_trace()
+            import pdb
+            pdb.set_trace()
             if bbgt.size > 0:
                 overlaps, ovmax, jmax, = calcOverlap(bb, bbgt)
             if ovmax > thresh:
@@ -234,6 +243,73 @@ def calcOverlap(bb, bbgt):
     return overlaps, ovmax, jmax
 
 
+def compare_gts(mygt, path_to_eval_gt, classname):
+    def cmpdict(d1, d2):
+        for key, val in d1.items():
+            if key in d2:
+                if d2[key] is not val and key != 'difficult':
+                    if type(val) is np.ndarray:
+                        if not np.array_equal(val, d2[key]):
+                            print('For key {}'.format(key))
+                            print('{}\n  !=  \n{}'.format(d2[key], val))
+                            return False
+                    elif val != [] and val is not None:
+                        if not np.all(val == d2[key]):
+                            print('For key {}'.format(key))
+                            print('{} != {}'.format(d2[key], val))
+                            return False
+            else:
+                return False
+        return True
+    imgsetpath = os.path.join(args.data_root, 'VOC2007',
+                              'ImageSets', 'Main', '{:s}.txt')
+    assert os.path.isfile(path_to_eval_gt), 'Invalid "%s"' % path_to_eval_gt
+    with open(imgsetpath.format('test'), 'r') as f:
+        lines = f.readlines()
+    imagenames = [x.strip() for x in lines]
+    with open(path_to_eval_gt, 'rb') as f:
+        recs = pickle.load(f)
+    class_recs = {}
+    npos = 0
+    for imagename in imagenames:
+        R = [obj for obj in recs[imagename] if obj['name'] == classname]
+        # remove 'difficult'
+        bbox = np.array([x['bbox'] for x in R])
+        difficult = np.array([x['difficult'] for x in R]).astype(np.bool)
+        det = [False] * len(R)
+        npos = npos + sum(~difficult)
+        class_recs[imagename] = {'bbox': bbox,
+                                 'difficult': difficult,
+                                 'det': det}
+    key_matches = []
+    key_misses = []
+    for key, val in mygt.items():
+        k_srt = os.path.basename(os.path.splitext(key)[0])
+        if k_srt in class_recs:
+            key_matches.append(key)
+
+            if not cmpdict(class_recs[k_srt], val):
+                print('keys identical but values different')
+                import pdb
+                pdb.set_trace()
+                print('Stay here!')
+            else:
+                pass
+        else:
+            key_misses.append(key)
+    print("{} misses, and {} matches".format(
+        len(key_misses), len(key_matches)))
+    assert len(mygt) == len(class_recs)
+    assert len(mygt) == len(imagenames)
+    if len(key_matches) == len(imagenames):
+        print('Ground Truths Match!')
+        return True
+    else:
+        import pdb
+        pdb.set_trace()
+        return False
+
+
 def getDetandGT(dataset, net, use_cuda=True):
     '''
     Perform a forward pass of the network over every image in dataset.
@@ -244,6 +320,7 @@ def getDetandGT(dataset, net, use_cuda=True):
     all_boxes = [[[] for _ in range(num_images)]
                  for _ in range(dataset.num_classes())]
     all_targets = {}
+    print_it = num_images // 4
     for i in range(num_images):
         im, gt, h, w = dataset.pull_item(i)
         imname = dataset.pull_image_name(i)
@@ -252,7 +329,9 @@ def getDetandGT(dataset, net, use_cuda=True):
         if use_cuda:
             x = x.cuda()
         _t['im_detect'].tic()
-        detections = net(x).data
+        # print(type(net), '\n', net)
+        y = net(x)
+        detections = y.data
         detect_time = _t['im_detect'].toc(average=False)
 
         # skip j = 0, because it's the background class
@@ -276,9 +355,9 @@ def getDetandGT(dataset, net, use_cuda=True):
         gt[:, 1] *= h
         gt[:, 3] *= h
         all_targets[imname] = gt
-
-        print('im_detect: {:d}/{:d} {:.3f}s'.format(i + 1,
-                                                    num_images, detect_time))
+        if i % print_it == 0:
+            print('Eval det: {:d}/{:d} {:.3f}s'.format(i + 1,
+                                                        num_images, detect_time))
     return all_boxes, all_targets
 
 
@@ -325,6 +404,7 @@ def main(args):
         cudnn.benchmark = True
     eval_ssd(data_iter, net, args.save_path, cuda=args.cuda,
              use_voc_07=use_voc_07_ap_metric)
+
 
 if __name__ == '__main__':
     args = get_args()
