@@ -162,17 +162,18 @@ def train():
                         'loc_loss': loss_l.data[0],
                         'conf_loss': loss_c.data[0]}
             writer.add_scalars('loss/l_per_epoch', losses_d, epoch_n)
+            if iteration > 0:
+                if args.send_images_to_tb:
+                    if batch_size > 10:
+                        imgx = vutils.make_grid(images.data.cpu()[:10, :, :],
+                                                normalize=True, scale_each=True)
+                    else:
+                        imgx = vutils.make_grid(images.data.cpu(),
+                                                normalize=True, scale_each=True)
+                    writer.add_image(
+                        'aug_image', imgx, iteration)
 
-        if iteration % 1000 == 0 and iteration > 0:
-            if args.send_images_to_tb:
-                if batch_size > 10:
-                    imgx = vutils.make_grid(images.data.cpu()[:10, :, :],
-                                            normalize=True, scale_each=True)
-                else:
-                    imgx = vutils.make_grid(images.data.cpu(),
-                                            normalize=True, scale_each=True)
-                writer.add_image(
-                    'aug_image', imgx, iteration)
+        # if iteration % 1000 == 0 and iteration > 0:
             # print('\nSaving state, iter:', iteration, end=' ')
             # sstr = os.path.join(
             #     save_weights, 'ssd{}_{}_{}.pth'.format(
@@ -253,7 +254,7 @@ if __name__ == '__main__':
                         ' send it to tensorboard after augmentations step')
     parser.add_argument('--save_folder', default='/home/sean/Documents/ssd/',
                         help='Location to save checkpoint models')
-    parser.add_argument('--data_root', default=None,
+    parser.add_argument('--data_root', default='',
                         help='Location of VOC root directory')
     parser.add_argument('--dataset', default='voc', type=str)
     args = parser.parse_args()
@@ -273,7 +274,7 @@ if __name__ == '__main__':
     max_iter = args.iterations
 
     print('Loading Dataset...')
-    if args.data_root is None:
+    if args.data_root == '':
         d_root = dataset_roots[args.dataset]
     else:
         d_root = args.data_root
@@ -298,8 +299,8 @@ if __name__ == '__main__':
     if 'voc' in args.dataset.lower():
         stepvalues = (80000, 100000, 120000)
     else:
-        # lower Lr every epoch
-        ep_list = [epoch_iter] * max_epochs
+        # lower Lr every 4 epoch
+        ep_list = [epoch_iter * 4] * (max_epochs // 4)
         stepvalues = [ep * count for ep, count in enumerate(ep_list, 1)]
 
     if os.path.isdir('/home/sean'):
@@ -334,7 +335,10 @@ if __name__ == '__main__':
         # else:
     writeHyperparams(writer, args, {'stepvalues': stepvalues})
     writeParamsTxt(os.path.join(job_path, 'params.txt'), args,
-                   {'stepvalues': stepvalues})
+                   {'stepvalues': stepvalues,
+                    'trainset': train_sets[args.dataset],
+                    'testset': test_sets[args.dataset],
+                    'd_root': d_root})
 
     ssd_net = build_ssd('train', ssd_dim, num_classes)
     # net = ssd_net
