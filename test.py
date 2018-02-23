@@ -66,7 +66,7 @@ def test_net(save_folder, net, cuda, testset, transform, thresh,
                     with open(filename, mode='a') as f:
                         f.write('PREDICTIONS: ' + '\n')
                 score = detections[0, i, j, 0]
-                label_name = labelmap[i - 1]
+                label_name = testset.classes[i - 1]
                 # if 'mine_vehicle' in label_name:
                 #     continue
                 pt = (detections[0, i, j, 1:] * scale).cpu().numpy()

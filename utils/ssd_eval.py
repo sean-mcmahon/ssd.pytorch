@@ -411,12 +411,12 @@ def eval_saved_states(eval_dataset, jobdir, cuda, weightsdir='weights',
     # https://stackoverflow.com/questions/9764298/is-it-possible-to-sort-two-listswhich-reference-each-other-in-the-exact-same-w
     mean_aps, pth_files = (list(t)
                            for t in zip(*sorted(zip(mean_aps, pth_files))))
-    pth_files = [os.path.basename(os.path.splitext(tt)[0]) for tt in pth_files]
+    pth_files = [os.path.basename(tt) for tt in pth_files]
     print('\n' + '~' * 10)
     with open(os.path.join(jobdir, 'eval_metrics.txt'), 'w') as f:
-        for count, ii in enumerate(range(len(mean_aps)-1, 0, -1), 1):
-            sstr = '{}. mAp = {} - "{}"'.format(count, mean_aps[ii],
-                                                pth_files[ii])
+        for count, ii in enumerate(range(len(mean_aps) - 1, 0, -1), 1):
+            sstr = '{}. mAp = {} - "{}"'.format(
+                count, mean_aps[ii], os.path.splitext(pth_files[ii])[0])
             f.write(sstr + '\n')
             print(sstr)
     print('~' * 10)
