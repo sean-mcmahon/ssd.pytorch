@@ -13,7 +13,7 @@ from data import v2, v1
 from data import detection_collate, VOCroot
 from data import train_sets, test_sets, rgb_means, data_iters
 from data import augmentators, target_transforms, dataset_roots
-from test import save_predictions
+import test
 import utils.ssd_eval
 # from data.mining import MiningDataset, MiningAnnotationTransform
 # from utils.augmentations import SSDAugmentation, SSDMiningAugmentation
@@ -430,7 +430,7 @@ if __name__ == '__main__':
     del ssd_net
     best_weights = utils.ssd_eval.eval_saved_states(eval_dataset, job_path,
                                                     args.cuda, ssd_dim=ssd_dim)
-    save_predictions(
+    test.save_predictions(
         os.path.join(job_path, 'visualisations'), best_weights, eval_dataset,
         cuda=args.cuda)
     print('Done. Job path "{}"'.format(job_path))
